@@ -25,7 +25,7 @@ process.on('uncaughtException', async (error) => {
   process.exit(1);
 });
 
-let app;
+let app: Awaited<ReturnType<typeof buildApp>>;
 try {
   app = await buildApp();
 } catch (error) {
@@ -88,17 +88,148 @@ try {
 }
 
 /**
- * SETTLEMENT DOES NOT DEPEND ON A WEBHOOK ARRIVING.
+ * Register a background worker with staggered boot delay, unref'd intervals,
+ * and in-flight execution guard (overlap protection).
  *
- * Started here rather than in buildApp() so that building the app in a test
- * does not start a timer that then talks to a live partner API.
- *
- * Every failure is swallowed and logged: this is a safety net, and a safety
- * net that can take the process down is worse than no safety net.
+ * Prevents CPU, event-loop, and database connection pool exhaustion at boot.
  */
-if (env.NGN_SETTLEMENT_POLL_SECONDS > 0) {
-  const intervalMs = env.NGN_SETTLEMENT_POLL_SECONDS * 1000;
+function registerBackgroundWorker(options: {
+  name: string;
+  intervalSeconds: number;
+  bootDelaySeconds: number;
+  task: () => Promise<void>;
+}): void {
+  if (options.intervalSeconds <= 0) return;
+  const intervalMs = options.intervalSeconds * 1000;
+  const bootDelayMs = options.bootDelaySeconds * 1000;
+  let inFlight = false;
+
   const tick = async () => {
+    if (inFlight) {
+      app.log.warn(
+        { worker: options.name },
+        'background worker tick skipped: previous run still in flight'
+      );
+      return;
+    }
+    inFlight = true;
+    try {
+      await options.task();
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  // Staggered startup delay: do not hammer database and CPU at t=0
+  const timer = setTimeout(() => {
+    void tick();
+    setInterval(tick, intervalMs).unref();
+  }, bootDelayMs);
+  timer.unref();
+
+  app.log.info(
+    { worker: options.name, bootDelaySeconds: options.bootDelaySeconds, intervalSeconds: options.intervalSeconds },
+    'background worker registered with staggered startup delay'
+  );
+}
+
+/**
+ * 1. TRANSFER CONFIRMER (High-Priority Safety)
+ * Boot delay: 10s | Cadence: 60s
+ * Re-checks crypto sends that are still 'processing' to confirm on-chain finality.
+ */
+registerBackgroundWorker({
+  name: 'transfer_confirmer',
+  intervalSeconds: env.TRANSFER_CONFIRM_POLL_SECONDS,
+  bootDelaySeconds: 10,
+  task: async () => {
+    try {
+      const outcome = await confirmBalanceTransfers();
+      if (outcome.confirmed.length > 0) {
+        app.log.info({ confirmed: outcome.confirmed }, 'crypto sends confirmed on chain');
+      }
+      if (outcome.failed.length > 0) {
+        app.log.error({ failed: outcome.failed }, 'crypto sends reverted on chain; holds released');
+      }
+      if (outcome.stale.length > 0) {
+        app.log.warn(
+          { stale: outcome.stale },
+          'crypto sends submitted but still unconfirmed; a human must check the chain'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'transfer confirmer failed');
+      captureError(error as Error, { source: 'transfer_confirmer' });
+    }
+  },
+});
+
+/**
+ * 2. DEPOSIT CONFIRMATION WORKER (High-Priority Safety)
+ * Boot delay: 15s | Cadence: 60s
+ * Moves deposits off 'pending' once finality is confirmed.
+ */
+registerBackgroundWorker({
+  name: 'deposit_confirmation',
+  intervalSeconds: env.DEPOSIT_CONFIRM_SECONDS,
+  bootDelaySeconds: 15,
+  task: async () => {
+    try {
+      const outcome = await confirmDeposits();
+      if (outcome.confirmed.length > 0) {
+        app.log.info({ confirmed: outcome.confirmed.length }, 'inbound deposits confirmed');
+      }
+      if (outcome.stale.length > 0) {
+        app.log.error(
+          { stale: outcome.stale },
+          'deposits unconfirmed far longer than any chain takes; the badge is wrong, the money may well be spendable'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'deposit confirmation failed');
+      captureError(error as Error, { source: 'deposit_confirmation' });
+    }
+  },
+});
+
+/**
+ * 3. DEPOSIT NOTIFIER (High-Priority Safety)
+ * Boot delay: 20s | Cadence: 60s
+ * Delivers notifications for newly detected and recorded deposits.
+ */
+registerBackgroundWorker({
+  name: 'deposit_notifier',
+  intervalSeconds: env.DEPOSIT_NOTIFY_SECONDS,
+  bootDelaySeconds: 20,
+  task: async () => {
+    try {
+      const outcome = await notifyPendingDeposits();
+      if (outcome.sent > 0) {
+        app.log.info({ sent: outcome.sent }, 'deposit notifications delivered');
+      }
+      if (outcome.failed > 0) {
+        app.log.error(
+          { failed: outcome.failed },
+          'deposit notifications failed to send; the deposits are recorded and visible in-app'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'deposit notifier failed');
+      captureError(error as Error, { source: 'deposit_notifier' });
+    }
+  },
+});
+
+/**
+ * 4. NGN SETTLEMENT RECONCILER (Medium-Priority Sweep)
+ * Boot delay: 30s | Cadence: 300s (5m)
+ * Safety net for bank transfer settlements that may have missed a webhook.
+ */
+registerBackgroundWorker({
+  name: 'ngn_settlement_reconciler',
+  intervalSeconds: env.NGN_SETTLEMENT_POLL_SECONDS,
+  bootDelaySeconds: 30,
+  task: async () => {
     try {
       const outcome = await reconcileNgnSettlements();
       if (outcome.advanced.length > 0) {
@@ -118,66 +249,19 @@ if (env.NGN_SETTLEMENT_POLL_SECONDS > 0) {
       app.log.error({ err: error }, 'ngn settlement reconciler failed');
       captureError(error as Error, { source: 'ngn_settlement_reconciler' });
     }
-  };
-  // unref() so the timer never holds the process open during a shutdown.
-  setInterval(tick, intervalMs).unref();
-  // Run once at boot: a deploy is exactly when a webhook is most likely to
-  // have been missed.
-  void tick();
-}
+  },
+});
 
 /**
- * A CRYPTO SEND HAD NO WAY TO FINISH.
- *
- * Reported with a screenshot: three sends stuck on "Processing", the oldest
- * two hours old. All three had actually settled - both Solana transfers are
- * finalised on chain with err:null and the recipient received every cent.
- * Nothing ever went back to look.
- *
- * `completed` was declared in BalanceTransferStatus and never once assigned to
- * a transfer. executeBalanceTransfer wrote 'processing' when the provider
- * accepted the broadcast and that was the final word. There was no poller and
- * no webhook on this path.
- *
- * Same shape and the same safety rules as the settlement reconciler above:
- * started here rather than in buildApp() so tests do not spawn a timer that
- * talks to a live chain, every failure swallowed and logged, unref'd.
+ * 5. UTILITY RECONCILER (Medium-Priority Sweep)
+ * Boot delay: 45s | Cadence: 300s (5m)
+ * Reconciles unsettled and pending utility purchases with upstream aggregators.
  */
-if (env.TRANSFER_CONFIRM_POLL_SECONDS > 0) {
-  const intervalMs = env.TRANSFER_CONFIRM_POLL_SECONDS * 1000;
-  const tick = async () => {
-    try {
-      const outcome = await confirmBalanceTransfers();
-      if (outcome.confirmed.length > 0) {
-        app.log.info({ confirmed: outcome.confirmed }, 'crypto sends confirmed on chain');
-      }
-      if (outcome.failed.length > 0) {
-        app.log.error({ failed: outcome.failed }, 'crypto sends reverted on chain; holds released');
-      }
-      if (outcome.stale.length > 0) {
-        app.log.warn(
-          { stale: outcome.stale },
-          'crypto sends submitted but still unconfirmed; a human must check the chain'
-        );
-      }
-    } catch (error) {
-      app.log.error({ err: error }, 'transfer confirmer failed');
-      captureError(error as Error, { source: 'transfer_confirmer' });
-    }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
-
-/**
- * RECONCILE UNSETTLED AND PENDING UTILITY PURCHASES
- *
- * Settle purchases that vended successfully upstream during a transient DB glitch,
- * and track purchases whose provider fulfillment status was unknown.
- */
-if (env.UTILITY_RECONCILE_POLL_SECONDS > 0) {
-  const intervalMs = env.UTILITY_RECONCILE_POLL_SECONDS * 1000;
-  const tick = async () => {
+registerBackgroundWorker({
+  name: 'utility_reconciler',
+  intervalSeconds: env.UTILITY_RECONCILE_POLL_SECONDS,
+  bootDelaySeconds: 45,
+  task: async () => {
     try {
       const outcome = await reconcileUnsettledUtilityPurchases();
       if (outcome.settled.length > 0) {
@@ -193,45 +277,24 @@ if (env.UTILITY_RECONCILE_POLL_SECONDS > 0) {
       app.log.error({ err: error }, 'utility reconciler failed');
       captureError(error as Error, { source: 'utility_reconciler' });
     }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
+  },
+});
 
 /**
- * NOBODY WAS EVER TOLD THAT MONEY ARRIVED.
- *
- * A user sells on an exchange and withdraws USDC to their Sivan address - the
- * most common way money enters this product for the launch market. The system
- * did nothing about it: no record, no activity row, no notification. The
- * balance simply read higher on the next refresh, and if the RPC read happened
- * to fail it did not even do that, while the user held an exchange receipt
- * saying the money was sent.
- *
- * Two loops, deliberately separate. Detection writes records; notification
- * delivers them. A failing email provider must not stop deposits being
- * RECORDED, and a slow wallet sweep must not delay the alert for a deposit that
- * has already been found. They share only the database.
- *
- * Same rules as the two reconcilers above: started outside buildApp() so tests
- * do not spawn timers that talk to a live chain, every failure swallowed and
- * logged, unref'd, and one run at boot because a deploy is exactly when an
- * event is most likely to have been missed.
+ * 6. DEPOSIT SCANNER (Medium-Priority Sweep)
+ * Boot delay: 60s | Cadence: 120s (2m)
+ * Sweeps registered wallets for incoming crypto deposits across supported chains.
  */
-if (env.DEPOSIT_POLL_SECONDS > 0) {
-  const intervalMs = env.DEPOSIT_POLL_SECONDS * 1000;
-  const tick = async () => {
+registerBackgroundWorker({
+  name: 'deposit_scanner',
+  intervalSeconds: env.DEPOSIT_POLL_SECONDS,
+  bootDelaySeconds: 60,
+  task: async () => {
     try {
       const outcome = await scanForDeposits();
       if (outcome.depositsRecorded > 0) {
         app.log.info({ recorded: outcome.recorded }, 'inbound deposits detected');
       }
-      /**
-       * Logged as a warning, not swallowed silently. An unreadable balance is
-       * a deposit we cannot see, so a persistent count here means users are
-       * receiving money the product is blind to - which looks identical to
-       * "no deposits are happening" unless it is surfaced.
-       */
       if (outcome.unreadable > 0) {
         app.log.warn(
           { unreadable: outcome.unreadable, scanned: outcome.walletsScanned },
@@ -242,102 +305,19 @@ if (env.DEPOSIT_POLL_SECONDS > 0) {
       app.log.error({ err: error }, 'deposit scan failed');
       captureError(error as Error, { source: 'deposit_scan' });
     }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
+  },
+});
 
 /**
- * THE LOOP THAT MOVES A DEPOSIT OFF "In progress".
- *
- * Reported with a screenshot showing the dashboard contradicting itself: the
- * balance card read "20 USDC / Available to send or sell / Ready" while the
- * activity row directly beneath it read "Deposit received ... In progress",
- * 28 minutes after the money had landed and been spendable.
- *
- * Nothing was broken in the sense of throwing. `recordDeposit` writes
- * 'pending', the status enum declares 'confirmed', both drivers implement
- * `updateWalletDepositStatus`, and migration 042 even indexes the pending set -
- * but there were ZERO callers of that writer. 'pending' was a permanent label
- * rather than a state, so the badge could never change.
- *
- * A THIRD timer rather than folding this into the scan, for the same reason
- * detection and notification are already separate: a slow chain read while
- * confirming an old deposit must not delay DETECTING a new one, which is the
- * job whose latency a user actually feels. They share only the database.
- *
- * 45s, matching the notifier rather than the 60s scan. A deposit only becomes
- * confirmable after it is recorded, so this interval is the tail of the delay a
- * user watches, and there is no chain read to save by waiting longer.
+ * 7. DEADLINE SWEEPER (Medium-Priority Sweep)
+ * Boot delay: 75s | Cadence: 300s (5m)
+ * Proactively notifies buyers and sellers of approaching or overdue Service Agreement deadlines.
  */
-if (env.DEPOSIT_CONFIRM_SECONDS > 0) {
-  const intervalMs = env.DEPOSIT_CONFIRM_SECONDS * 1000;
-  const tick = async () => {
-    try {
-      const outcome = await confirmDeposits();
-      if (outcome.confirmed.length > 0) {
-        app.log.info({ confirmed: outcome.confirmed.length }, 'inbound deposits confirmed');
-      }
-      /**
-       * Escalated as an ERROR, not a warning. A stale pending deposit means a
-       * user is looking at "In progress" against money that is already in
-       * their balance - the exact contradiction this loop exists to remove -
-       * and it will not clear itself.
-       */
-      if (outcome.stale.length > 0) {
-        app.log.error(
-          { stale: outcome.stale },
-          'deposits unconfirmed far longer than any chain takes; the badge is wrong, the money may well be spendable'
-        );
-      }
-    } catch (error) {
-      app.log.error({ err: error }, 'deposit confirmation failed');
-      captureError(error as Error, { source: 'deposit_confirmation' });
-    }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
-
-if (env.DEPOSIT_NOTIFY_SECONDS > 0) {
-  const intervalMs = env.DEPOSIT_NOTIFY_SECONDS * 1000;
-  const tick = async () => {
-    try {
-      const outcome = await notifyPendingDeposits();
-      if (outcome.sent > 0) {
-        app.log.info({ sent: outcome.sent }, 'deposit notifications delivered');
-      }
-      if (outcome.failed > 0) {
-        app.log.error(
-          { failed: outcome.failed },
-          'deposit notifications failed to send; the deposits are recorded and visible in-app'
-        );
-      }
-    } catch (error) {
-      app.log.error({ err: error }, 'deposit notifier failed');
-      captureError(error as Error, { source: 'deposit_notifier' });
-    }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
-
-/**
- * SERVICE AGREEMENT DEADLINES GO UNNOTIFIED WITHOUT THIS.
- *
- * Sellers approaching their delivery window and buyers whose deliveries have
- * gone overdue receive no proactive notification unless this loop fires.
- * The 6-hour warning is the last actionable signal a seller gets before a
- * buyer can open a dispute; the overdue notice is what tells the buyer they
- * can extend or cancel. Neither sends itself.
- *
- * Same shape and same safety rules as every other background loop here:
- * started outside buildApp() so tests do not spawn timers, every failure
- * swallowed and logged, unref'd, one run at boot.
- */
-if (env.DEADLINE_SWEEP_SECONDS > 0) {
-  const intervalMs = env.DEADLINE_SWEEP_SECONDS * 1000;
-  const tick = async () => {
+registerBackgroundWorker({
+  name: 'deadline_sweeper',
+  intervalSeconds: env.DEADLINE_SWEEP_SECONDS,
+  bootDelaySeconds: 75,
+  task: async () => {
     try {
       const outcome = await sweepDeadlineAlerts();
       if (outcome.sent6h > 0) {
@@ -356,48 +336,19 @@ if (env.DEADLINE_SWEEP_SECONDS > 0) {
       app.log.error({ err: error }, 'deadline sweeper failed');
       captureError(error as Error, { source: 'deadline_sweeper' });
     }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
+  },
+});
 
 /**
- * 90-DAY AUDIT LOG ARCHIVAL WORKER
- *
- * Automatically migrates audit logs older than AUDIT_LOG_RETENTION_DAYS (standard 90 days)
- * from payments_audit_logs into payments_audit_logs_archive.
- * Keeps active queries lean while retaining compliance dispute evidence indefinitely.
+ * 8. PROVIDER FLOAT MONITOR (Low-Priority Maintenance)
+ * Boot delay: 180s (3m) | Cadence: 1800s (30m)
+ * Monitors Paystack payout pools and gas wallet float balances, alerting ops when thresholds drop.
  */
-if (env.AUDIT_LOG_ARCHIVE_POLL_SECONDS > 0) {
-  const intervalMs = env.AUDIT_LOG_ARCHIVE_POLL_SECONDS * 1000;
-  const tick = async () => {
-    try {
-      const outcome = await archiveExpiredAuditLogs(env.AUDIT_LOG_RETENTION_DAYS);
-      if (outcome.archivedCount > 0) {
-        app.log.info(
-          { archivedCount: outcome.archivedCount, oldestRemainingDate: outcome.oldestRemainingDate },
-          'expired audit logs successfully archived to compliance storage'
-        );
-      }
-    } catch (error) {
-      app.log.error({ err: error }, 'audit log archival worker failed');
-      captureError(error as Error, { source: 'audit_log_archival' });
-    }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
-
-/**
- * PROVIDER FLOAT THRESHOLD MONITOR WORKER
- *
- * Automatically monitors pre-funded float balances across Paystack payout pools,
- * utility aggregators, and sponsoring gas wallets against warning and critical buffers.
- * Dispatches Telegram Ops Alerts when float drops below safe operating thresholds.
- */
-if (env.FLOAT_MONITOR_POLL_SECONDS > 0) {
-  const intervalMs = env.FLOAT_MONITOR_POLL_SECONDS * 1000;
-  const tick = async () => {
+registerBackgroundWorker({
+  name: 'provider_float_monitor',
+  intervalSeconds: env.FLOAT_MONITOR_POLL_SECONDS,
+  bootDelaySeconds: 180,
+  task: async () => {
     try {
       const outcome = await evaluateProviderFloats();
       if (outcome.alertsTriggered > 0) {
@@ -410,20 +361,19 @@ if (env.FLOAT_MONITOR_POLL_SECONDS > 0) {
       app.log.error({ err: error }, 'provider float monitor failed');
       captureError(error as Error, { source: 'provider_float_monitor' });
     }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
+  },
+});
 
 /**
- * UNIVERSAL MULTI-PROVIDER RECONCILIATION WORKER
- *
- * Sweeps pending transfers, missing virtual account events, and provider settlement logs.
- * Automatically reconciles deterministic settlements and syncs provider terminal states.
+ * 9. UNIVERSAL RECONCILIATION WORKER (Low-Priority Maintenance)
+ * Boot delay: 300s (5m) | Cadence: 1800s (30m)
+ * Automatically syncs terminal states and cross-provider settlements.
  */
-if (env.RECONCILIATION_SWEEP_POLL_SECONDS > 0) {
-  const intervalMs = env.RECONCILIATION_SWEEP_POLL_SECONDS * 1000;
-  const tick = async () => {
+registerBackgroundWorker({
+  name: 'universal_reconciliation_worker',
+  intervalSeconds: env.RECONCILIATION_SWEEP_POLL_SECONDS,
+  bootDelaySeconds: 300,
+  task: async () => {
     try {
       const outcome = await runUniversalDailyReconciliation();
       if (outcome.autoResolvedCount > 0) {
@@ -436,7 +386,30 @@ if (env.RECONCILIATION_SWEEP_POLL_SECONDS > 0) {
       app.log.error({ err: error }, 'universal reconciliation worker failed');
       captureError(error as Error, { source: 'universal_reconciliation_worker' });
     }
-  };
-  setInterval(tick, intervalMs).unref();
-  void tick();
-}
+  },
+});
+
+/**
+ * 10. AUDIT LOG ARCHIVAL WORKER (Background Housekeeping)
+ * Boot delay: 900s (15m) | Cadence: 86400s (24h)
+ * Moves expired audit logs (older than 90 days) to cold compliance storage.
+ */
+registerBackgroundWorker({
+  name: 'audit_log_archival',
+  intervalSeconds: env.AUDIT_LOG_ARCHIVE_POLL_SECONDS,
+  bootDelaySeconds: 900,
+  task: async () => {
+    try {
+      const outcome = await archiveExpiredAuditLogs(env.AUDIT_LOG_RETENTION_DAYS);
+      if (outcome.archivedCount > 0) {
+        app.log.info(
+          { archivedCount: outcome.archivedCount, oldestRemainingDate: outcome.oldestRemainingDate },
+          'expired audit logs successfully archived to compliance storage'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'audit log archival worker failed');
+      captureError(error as Error, { source: 'audit_log_archival' });
+    }
+  },
+});
