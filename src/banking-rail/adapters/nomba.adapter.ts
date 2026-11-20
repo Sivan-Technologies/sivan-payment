@@ -205,9 +205,10 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
     const payload = {
       accountRef: `sivan_${userId}_${Date.now()}`,
       currency: 'NGN',
+      accountName: `SIVAN User ${userId.slice(-6)}`,
     };
 
-    const res = await fetch(`${this.baseUrl()}/virtual-accounts`, {
+    const res = await fetch(`${this.baseUrl()}/accounts/virtual`, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
@@ -223,10 +224,10 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
     const data = json?.data || json;
 
     return {
-      providerAccountId: String(data.id || data.orderReference || data.accountRef || `nomba_va_${Date.now()}`),
-      accountNumber: String(data.accountNumber || ''),
-      accountName: String(data.accountName || 'SIVAN TECHNOLOGIES'),
-      bankName: String(data.bankName || 'Wema Bank'),
+      providerAccountId: String(data.accountRef || data.id || data.orderReference || `nomba_va_${Date.now()}`),
+      accountNumber: String(data.bankAccountNumber || data.accountNumber || ''),
+      accountName: String(data.bankAccountName || data.accountName || 'SIVAN TECHNOLOGIES'),
+      bankName: String(data.bankName || 'Nombank MFB'),
       currency: 'NGN',
       active: true,
       mode: process.env.APP_ENV === 'production' ? 'live' : 'test',
@@ -372,7 +373,8 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
       narration: input.narration || `Sivan Payout ${input.providerRef}`,
     };
 
-    const res = await fetch(`${this.baseUrl()}/transfers/bank`, {
+    const transferUrl = `${this.baseUrl().replace(/\/v1$/, '/v2')}/transfers/bank`;
+    const res = await fetch(transferUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
