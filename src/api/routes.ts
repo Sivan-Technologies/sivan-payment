@@ -7,6 +7,7 @@ import { liquidationAddressesRoutes } from '../offramp/api/liquidation-addresses
 import { walletRoutes } from '../wallets/wallet.routes.js';
 import { withdrawalsRoutes } from '../offramp/api/withdrawals.routes.js';
 import { webhooksRoutes } from '../webhooks/webhooks.routes.js';
+import { internalBankingRailRoutes } from '../banking-rail/api/internal-banking-rail.routes.js';
 import { feesRoutes } from '../offramp/api/fees.routes.js';
 import { metricsRoutes } from '../metrics/metrics.routes.js';
 import { providersRoutes } from '../providers/providers.routes.js';
@@ -125,6 +126,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await aceSupportRoutes(app);
   await adminRoutes(app);
   await webhooksRoutes(app);
+  await internalBankingRailRoutes(app);
   await moneygramRoutes(app);
   await app.register(developerGatewayRoutes);
   await developerKeysRoutes(app);

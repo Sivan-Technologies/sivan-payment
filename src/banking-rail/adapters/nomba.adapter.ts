@@ -1,0 +1,485 @@
+/**
+ * NOMBA BANKING RAIL ADAPTER
+ *
+ * Implements IBankingRailAdapter for Nomba's Banking-as-a-Service rails.
+ * Handles:
+ *   1. Dedicated Virtual Account issuance (Wema, Providus, Titan Trust)
+ *   2. Real-time NIBSS NIP inbound deposit processing
+ *   3. Outbound bank disbursements / payouts with strict idempotency
+ *   4. HMAC-SHA512 webhook signature verification and event normalization
+ *
+ * API Base URLs:
+ *   Sandbox:    https://sandbox.nomba.com or https://api.nomba.com/v1
+ *   Production: https://api.nomba.com/v1
+ */
+
+import crypto from 'node:crypto';
+import type {
+  IBankingRailAdapter,
+  BankingRailEvent,
+  BankingRailName,
+  CreateCustomerInput,
+  CustomerRecord,
+  IdentityInput,
+  VirtualAccountRecord,
+  CreateTransferInput,
+  TransferRecord,
+  TransferStatus,
+} from '../banking-rail.adapter.js';
+
+interface NombaTokenCache {
+  accessToken: string;
+  expiresAt: number;
+}
+
+export class NombaBankingRailAdapter implements IBankingRailAdapter {
+  readonly name: BankingRailName = 'nomba';
+
+  private tokenCache?: NombaTokenCache;
+
+  private accountId(): string {
+    return (
+      process.env.NOMBA_ACCOUNT_ID ||
+      process.env.NOMBA_TEST_ACCOUNT_ID ||
+      process.env.NOMBA_LIVE_ACCOUNT_ID ||
+      ''
+    ).trim();
+  }
+
+  private clientId(): string {
+    return (
+      process.env.NOMBA_CLIENT_ID ||
+      process.env.NOMBA_TEST_CLIENT_ID ||
+      process.env.NOMBA_LIVE_CLIENT_ID ||
+      ''
+    ).trim();
+  }
+
+  private clientSecret(): string {
+    return (
+      process.env.NOMBA_CLIENT_SECRET ||
+      process.env.NOMBA_TEST_CLIENT_SECRET ||
+      process.env.NOMBA_LIVE_CLIENT_SECRET ||
+      ''
+    ).trim();
+  }
+
+  private baseUrl(): string {
+    const raw = (
+      process.env.NOMBA_BASE_URL ||
+      process.env.NOMBA_SANDBOX_BASE_URL ||
+      'https://api.nomba.com/v1'
+    ).trim().replace(/\/+$/, '');
+    return raw;
+  }
+
+  private webhookSecret(): string {
+    return (process.env.NOMBA_WEBHOOK_SECRET || '').trim();
+  }
+
+  public isConfigured(): boolean {
+    return Boolean(this.accountId() && this.clientId() && this.clientSecret());
+  }
+
+  /**
+   * Retrieves or refreshes OAuth Bearer token from Nomba.
+   */
+  private async getAccessToken(): Promise<string> {
+    if (this.tokenCache && Date.now() < this.tokenCache.expiresAt) {
+      return this.tokenCache.accessToken;
+    }
+
+    const accountId = this.accountId();
+    const clientId = this.clientId();
+    const clientSecret = this.clientSecret();
+
+    if (!accountId || !clientId || !clientSecret) {
+      throw new Error('[NombaBankingRailAdapter] Missing credentials (NOMBA_ACCOUNT_ID, NOMBA_CLIENT_ID, or NOMBA_CLIENT_SECRET)');
+    }
+
+    const url = `${this.baseUrl()}/auth/token/issue`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accountId: accountId,
+      },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`[NombaBankingRailAdapter] Failed to obtain token (${res.status}): ${errText}`);
+    }
+
+    const data = (await res.json()) as any;
+    const body = data?.data || data || {};
+    const token = body.access_token || body.accessToken || body.token;
+    const expiresIn = Number(body.expires_in || body.expiresIn || 1800);
+
+    if (!token) {
+      throw new Error('[NombaBankingRailAdapter] No access token in response');
+    }
+
+    const earlyRefreshMs = 5 * 60 * 1000;
+    this.tokenCache = {
+      accessToken: String(token),
+      expiresAt: Date.now() + Math.max(60, expiresIn) * 1000 - earlyRefreshMs,
+    };
+
+    return this.tokenCache.accessToken;
+  }
+
+  private async authHeaders(): Promise<Record<string, string>> {
+    const token = await this.getAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      accountId: this.accountId(),
+      Accept: 'application/json',
+    };
+  }
+
+  // ── Inbound Customer & Identity ───────────────────────────────────────────
+
+  async createCustomer(input: CreateCustomerInput): Promise<CustomerRecord> {
+    const providerCustomerId = `NOMBA_CUS_${input.userId}`;
+    const email = input.email || `${input.userId}@customer.sivan.local`;
+
+    return {
+      providerCustomerId,
+      email,
+      legalName: input.legalName,
+      kycStatus: 'pending',
+    };
+  }
+
+  async verifyIdentity(
+    providerCustomerId: string,
+    input: IdentityInput
+  ): Promise<{ accepted: true; message: string }> {
+    if (!this.isConfigured()) {
+      return { accepted: true, message: 'Nomba identity verification accepted (sandbox unconfigured mode)' };
+    }
+
+    try {
+      if (input.type === 'bank_account') {
+        const headers = await this.authHeaders();
+        const res = await fetch(`${this.baseUrl()}/transfers/bank/lookup`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            accountNumber: input.value,
+            bankCode: input.country || '058',
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+
+        if (!res.ok) {
+          throw new Error(`Nomba account lookup error status ${res.status}`);
+        }
+      }
+
+      return {
+        accepted: true,
+        message: 'Nomba identity verification submitted for verification',
+      };
+    } catch (err: any) {
+      console.warn('[NombaBankingRailAdapter] verifyIdentity warning:', err.message);
+      return {
+        accepted: true,
+        message: `Nomba identity verification queued: ${err.message}`,
+      };
+    }
+  }
+
+  async assignVirtualAccount(providerCustomerId: string): Promise<VirtualAccountRecord> {
+    const headers = await this.authHeaders();
+    const userId = providerCustomerId.replace(/^NOMBA_CUS_/, '');
+
+    const payload = {
+      accountRef: `sivan_${userId}_${Date.now()}`,
+      currency: 'NGN',
+    };
+
+    const res = await fetch(`${this.baseUrl()}/virtual-accounts`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`[NombaBankingRailAdapter] assignVirtualAccount failed (${res.status}): ${errText}`);
+    }
+
+    const json = (await res.json()) as any;
+    const data = json?.data || json;
+
+    return {
+      providerAccountId: String(data.id || data.orderReference || data.accountRef || `nomba_va_${Date.now()}`),
+      accountNumber: String(data.accountNumber || ''),
+      accountName: String(data.accountName || 'SIVAN TECHNOLOGIES'),
+      bankName: String(data.bankName || 'Wema Bank'),
+      currency: 'NGN',
+      active: true,
+      mode: process.env.APP_ENV === 'production' ? 'live' : 'test',
+    };
+  }
+
+  async listVirtualAccounts(userId: string): Promise<VirtualAccountRecord[]> {
+    return [];
+  }
+
+  // ── Webhook Verification & Normalization ──────────────────────────────────
+
+  verifyWebhookSignature(rawBody: Buffer, headers: Record<string, string>): boolean {
+    const secret = this.webhookSecret();
+    if (!secret) {
+      console.warn('[NombaBankingRailAdapter] verifyWebhookSignature: NOMBA_WEBHOOK_SECRET is not configured.');
+      return false;
+    }
+
+    const incomingSig =
+      headers['x-nomba-signature'] ||
+      headers['nomba-signature'] ||
+      headers['x-signature'] ||
+      '';
+
+    if (!incomingSig) {
+      return false;
+    }
+
+    const hmac = crypto.createHmac('sha512', secret);
+    hmac.update(rawBody);
+    const expectedSig = hmac.digest('hex');
+
+    const expectedBuf = Buffer.from(expectedSig);
+    const incomingBuf = Buffer.from(incomingSig);
+
+    if (expectedBuf.length !== incomingBuf.length) {
+      // Also try sha256 fallback if length matches 64 chars
+      if (incomingSig.length === 64) {
+        const hmac256 = crypto.createHmac('sha256', secret);
+        hmac256.update(rawBody);
+        const expected256 = hmac256.digest('hex');
+        const expBuf256 = Buffer.from(expected256);
+        return expBuf256.length === incomingBuf.length && crypto.timingSafeEqual(expBuf256, incomingBuf);
+      }
+      return false;
+    }
+
+    return crypto.timingSafeEqual(expectedBuf, incomingBuf);
+  }
+
+  parseWebhookEvent(rawBody: Buffer): BankingRailEvent {
+    let payload: any;
+    try {
+      payload = JSON.parse(rawBody.toString('utf8'));
+    } catch {
+      return { type: 'ignored', originalType: 'unparseable_json' };
+    }
+
+    const eventType = String(payload.event_type || payload.eventType || payload.type || '').toLowerCase();
+    const data = payload.data || payload;
+    const tx = data.transaction || data;
+
+    // 1. Inbound Deposit Events
+    if (
+      eventType.includes('payment') ||
+      eventType.includes('deposit') ||
+      eventType === 'order_payment_successful' ||
+      eventType === 'payment_successful'
+    ) {
+      const amountNaira = Number(tx.amount || tx.transactionAmount || 0);
+      const amountKobo = Math.round(amountNaira * 100);
+      const reference = String(tx.merchantTxRef || tx.transactionId || tx.id || `nomba_ref_${Date.now()}`);
+      const accountRef = String(data.accountRef || tx.accountRef || '');
+
+      let userId = '';
+      if (accountRef.startsWith('sivan_')) {
+        userId = accountRef.split('_')[1] || '';
+      } else if (tx.customerEmail) {
+        userId = String(tx.customerEmail).replace(/@.*$/, '');
+      }
+
+      return {
+        type: 'deposit.received',
+        userId: userId || 'anonymous',
+        amountKobo,
+        reference,
+        currency: 'NGN',
+        providerCustomerId: accountRef || reference,
+      };
+    }
+
+    // 2. Outbound Transfer Events
+    if (eventType.includes('transfer')) {
+      const providerRef = String(tx.merchantTxRef || tx.transactionId || tx.id || '');
+      const statusStr = String(tx.status || '').toLowerCase();
+      const amountKobo = Math.round(Number(tx.amount || 0) * 100);
+
+      if (statusStr === 'success' || statusStr === 'successful' || statusStr === 'completed') {
+        return {
+          type: 'transfer.success',
+          providerRef,
+          amountKobo,
+        };
+      }
+
+      if (statusStr === 'failed' || statusStr === 'failure' || statusStr === 'rejected') {
+        return {
+          type: 'transfer.failed',
+          providerRef,
+          reason: String(tx.failureReason || tx.message || 'Transfer failed'),
+        };
+      }
+
+      if (statusStr === 'reversed' || statusStr === 'refund' || statusStr === 'refunded') {
+        return {
+          type: 'transfer.reversed',
+          providerRef,
+          amountKobo,
+        };
+      }
+    }
+
+    return {
+      type: 'ignored',
+      originalType: eventType || 'unknown_nomba_event',
+    };
+  }
+
+  // ── Outbound Disbursements ────────────────────────────────────────────────
+
+  async createTransfer(input: CreateTransferInput): Promise<TransferRecord> {
+    const headers = await this.authHeaders();
+    const amountNaira = Math.round((input.amountKobo / 100) * 100) / 100;
+
+    const body = {
+      amount: amountNaira,
+      accountNumber: input.accountNumber,
+      accountName: input.narration || 'Sivan Transfer',
+      bankCode: input.bankCode,
+      merchantTxRef: input.providerRef,
+      senderName: 'Sivan Technologies',
+      narration: input.narration || `Sivan Payout ${input.providerRef}`,
+    };
+
+    const res = await fetch(`${this.baseUrl()}/transfers/bank`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return {
+        providerRef: input.providerRef,
+        status: 'failed',
+        amountKobo: input.amountKobo,
+        failureReason: `Nomba error ${res.status}: ${errText}`,
+      };
+    }
+
+    const json = (await res.json()) as any;
+    const data = json?.data || json;
+    const rawStatus = String(data.status || json.status || '').toLowerCase();
+
+    let status: TransferStatus = 'pending';
+    if (rawStatus === 'success' || rawStatus === 'successful' || rawStatus === 'completed') {
+      status = 'success';
+    } else if (rawStatus === 'failed' || rawStatus === 'failure') {
+      status = 'failed';
+    } else if (rawStatus === 'reversed') {
+      status = 'reversed';
+    } else {
+      status = 'sent';
+    }
+
+    return {
+      providerRef: input.providerRef,
+      providerTransferId: data.id ? String(data.id) : undefined,
+      status,
+      amountKobo: input.amountKobo,
+      confirmedAt: status === 'success' ? new Date().toISOString() : undefined,
+      raw: json,
+    };
+  }
+
+  async getTransfer(providerRef: string): Promise<TransferRecord> {
+    const headers = await this.authHeaders();
+
+    const res = await fetch(`${this.baseUrl()}/transfers/bank/${encodeURIComponent(providerRef)}`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) {
+      return {
+        providerRef,
+        status: 'pending',
+        amountKobo: 0,
+        failureReason: `Nomba transfer lookup returned status ${res.status}`,
+      };
+    }
+
+    const json = (await res.json()) as any;
+    const data = json?.data || json;
+    const rawStatus = String(data.status || json.status || '').toLowerCase();
+
+    let status: TransferStatus = 'pending';
+    if (rawStatus === 'success' || rawStatus === 'successful' || rawStatus === 'completed') {
+      status = 'success';
+    } else if (rawStatus === 'failed' || rawStatus === 'failure') {
+      status = 'failed';
+    } else if (rawStatus === 'reversed') {
+      status = 'reversed';
+    }
+
+    return {
+      providerRef,
+      providerTransferId: data.id ? String(data.id) : undefined,
+      status,
+      amountKobo: Math.round(Number(data.amount || 0) * 100),
+      confirmedAt: status === 'success' ? new Date().toISOString() : undefined,
+      raw: json,
+    };
+  }
+
+  // ── Health Check ──────────────────────────────────────────────────────────
+
+  async health(): Promise<{ status: 'ok' | 'degraded'; latencyMs: number; detail?: string }> {
+    const start = Date.now();
+    try {
+      if (!this.isConfigured()) {
+        return {
+          status: 'degraded',
+          latencyMs: 0,
+          detail: 'Nomba credentials (ACCOUNT_ID, CLIENT_ID, CLIENT_SECRET) not set in environment',
+        };
+      }
+
+      await this.getAccessToken();
+      return {
+        status: 'ok',
+        latencyMs: Date.now() - start,
+        detail: 'Nomba auth token verification active',
+      };
+    } catch (err: any) {
+      return {
+        status: 'degraded',
+        latencyMs: Date.now() - start,
+        detail: err.message,
+      };
+    }
+  }
+}

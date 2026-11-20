@@ -17,14 +17,15 @@
 import type { IBankingRailAdapter, BankingRailName } from './banking-rail.adapter.js';
 import { PaystackBankingRailAdapter } from './adapters/paystack.adapter.js';
 import { MonoBankingRailAdapter } from './adapters/mono.adapter.js';
+import { NombaBankingRailAdapter } from './adapters/nomba.adapter.js';
 
 const _registry = new Map<BankingRailName, IBankingRailAdapter>();
 
 // ── Register built-in adapters ────────────────────────────────────────────────
 _registry.set('paystack', new PaystackBankingRailAdapter());
 _registry.set('mono', new MonoBankingRailAdapter());
+_registry.set('nomba', new NombaBankingRailAdapter());
 // Future: _registry.set('flutterwave', new FlutterwaveBankingRailAdapter());
-// Future: _registry.set('nomba', new NombaBankingRailAdapter());
 
 /**
  * Returns the active banking rail adapter.

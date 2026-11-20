@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { processBridgeWebhook } from './webhooks.service.js';
 import { processPaystackWebhook, PaystackWebhookError } from './paystackWebhookHandler.js';
 import { processMoneyGramWebhook, MoneyGramWebhookError } from './moneygramWebhookHandler.js';
+import { getBankingRailAdapter } from '../banking-rail/banking-rail-registry.js';
 
 export async function webhooksRoutes(app: FastifyInstance) {
   app.post('/api/webhooks/bridge', async (request, reply) => {
@@ -68,6 +69,58 @@ export async function webhooksRoutes(app: FastifyInstance) {
 
   app.post('/api/webhooks/paystack', handlePaystackWebhook);
   app.post('/webhooks/paystack', handlePaystackWebhook);
+
+  const handleNombaWebhook = async (request: any, reply: any) => {
+    const rawBody = request.rawBody as Buffer | undefined;
+    const raw = rawBody ?? Buffer.from(JSON.stringify(request.body ?? {}));
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(request.headers)) {
+      if (typeof value === 'string') headers[key.toLowerCase()] = value;
+      else if (Array.isArray(value) && typeof value[0] === 'string') headers[key.toLowerCase()] = value[0];
+    }
+
+    try {
+      const adapter = getBankingRailAdapter('nomba');
+      const isValid = adapter.verifyWebhookSignature(raw, headers);
+
+      if (!isValid && process.env.APP_ENV === 'production') {
+        console.warn('[nomba-webhook] Signature verification failed in production');
+        return reply.code(401).send({ error: 'invalid_signature' });
+      }
+
+      const event = adapter.parseWebhookEvent(raw);
+      console.log(`[nomba-webhook] Ingested event: ${event.type}`);
+
+      if (event.type === 'deposit.received') {
+        // If reference or userId matches an agreement, notify agreement sync
+        const targetId = event.userId.startsWith('agr_') ? event.userId : event.providerCustomerId;
+        if (targetId.startsWith('agr_')) {
+          const agreementId = targetId.replace(/^agr_/, '');
+          console.log(`[nomba-webhook] Agreement deposit received for agreementId: ${agreementId}, amount: ${event.amountKobo}`);
+          const escrowUrl = process.env.CORE_API_BASE_URL || process.env.ESCROW_AGENT_URL;
+          const coreSecret = process.env.CORE_API_SECRET;
+          if (escrowUrl && coreSecret) {
+            void fetch(`${escrowUrl.replace(/\/$/, '')}/api/escrows/${encodeURIComponent(agreementId)}/fund`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-core-api-key': coreSecret },
+              body: JSON.stringify({ amountKobo: event.amountKobo, providerRef: event.reference, provider: 'nomba' }),
+              signal: AbortSignal.timeout(4000),
+            }).catch((err) => console.warn('[nomba-webhook] Agreement funding notification failed:', err.message));
+          }
+        }
+      }
+
+      return reply.code(200).send({ status: 'received', eventType: event.type });
+    } catch (err: any) {
+      console.error('[nomba-webhook] Webhook processing error:', err.message);
+      return reply.code(200).send({ status: 'error_handled', message: err.message });
+    }
+  };
+
+  app.post('/api/webhooks/nomba', handleNombaWebhook);
+  app.post('/webhooks/nomba', handleNombaWebhook);
+  app.get('/api/webhooks/nomba', async (_req, reply) => reply.code(200).send({ status: 'ok', service: 'nomba-webhook-receiver' }));
+  app.get('/webhooks/nomba', async (_req, reply) => reply.code(200).send({ status: 'ok', service: 'nomba-webhook-receiver' }));
 
   app.post('/api/webhooks/moneygram', handleMoneyGramWebhook);
   app.post('/webhooks/moneygram', handleMoneyGramWebhook);
