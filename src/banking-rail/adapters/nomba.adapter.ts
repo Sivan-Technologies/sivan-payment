@@ -298,18 +298,29 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
       eventType.includes('payment') ||
       eventType.includes('deposit') ||
       eventType === 'order_payment_successful' ||
-      eventType === 'payment_successful'
+      eventType === 'payment_successful' ||
+      eventType === 'payment_success'
     ) {
-      const amountNaira = Number(tx.amount || tx.transactionAmount || 0);
-      const amountKobo = Math.round(amountNaira * 100);
-      const reference = String(tx.merchantTxRef || tx.transactionId || tx.id || `nomba_ref_${Date.now()}`);
-      const accountRef = String(data.accountRef || tx.accountRef || '');
+      const order = data.order || {};
+      const orderRef = String(order.orderReference || '').trim();
+      const orderCustomerId = String(order.customerId || '').trim();
+      const orderAmount = order.amount !== undefined ? Number(order.amount) : undefined;
 
-      let userId = '';
-      if (accountRef.startsWith('sivan_')) {
-        userId = accountRef.split('_')[1] || '';
-      } else if (tx.customerEmail) {
-        userId = String(tx.customerEmail).replace(/@.*$/, '');
+      const amountNaira = orderAmount !== undefined && !isNaN(orderAmount)
+        ? orderAmount
+        : Number(tx.amount || tx.transactionAmount || 0);
+
+      const amountKobo = Math.round(amountNaira * 100);
+      const reference = orderRef || String(tx.merchantTxRef || tx.transactionId || tx.id || `nomba_ref_${Date.now()}`);
+      const accountRef = String(data.accountRef || tx.accountRef || orderRef || '');
+
+      let userId = orderCustomerId || '';
+      if (!userId) {
+        if (accountRef.startsWith('sivan_')) {
+          userId = accountRef.split('_')[1] || '';
+        } else if (tx.customerEmail || order.customerEmail) {
+          userId = String(tx.customerEmail || order.customerEmail).replace(/@.*$/, '');
+        }
       }
 
       return {

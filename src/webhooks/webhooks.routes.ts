@@ -3,6 +3,7 @@ import { processBridgeWebhook } from './webhooks.service.js';
 import { processPaystackWebhook, PaystackWebhookError } from './paystackWebhookHandler.js';
 import { processMoneyGramWebhook, MoneyGramWebhookError } from './moneygramWebhookHandler.js';
 import { getBankingRailAdapter } from '../banking-rail/banking-rail-registry.js';
+import { nombaCheckoutService } from '../ngn/service/nomba-checkout.service.js';
 
 export async function webhooksRoutes(app: FastifyInstance) {
   app.post('/api/webhooks/bridge', async (request, reply) => {
@@ -92,9 +93,17 @@ export async function webhooksRoutes(app: FastifyInstance) {
       console.log(`[nomba-webhook] Ingested event: ${event.type}`);
 
       if (event.type === 'deposit.received') {
+        const orderRef = event.reference || '';
+        // If reference indicates a Sivan checkout order (deposit or agreement funding)
+        if (orderRef.startsWith('sivan_') || orderRef.startsWith('agr_') || String(event.providerCustomerId || '').startsWith('sivan_')) {
+          await nombaCheckoutService.processCheckoutSuccess(orderRef, event.userId).catch((err) => {
+            console.warn('[nomba-webhook] Checkout success auto-processing notice:', err.message);
+          });
+        }
+
         // If reference or userId matches an agreement, notify agreement sync
         const targetId = event.userId.startsWith('agr_') ? event.userId : event.providerCustomerId;
-        if (targetId.startsWith('agr_')) {
+        if (targetId.startsWith('agr_') && !orderRef.startsWith('sivan_agr_')) {
           const agreementId = targetId.replace(/^agr_/, '');
           console.log(`[nomba-webhook] Agreement deposit received for agreementId: ${agreementId}, amount: ${event.amountKobo}`);
           const escrowUrl = process.env.CORE_API_BASE_URL || process.env.ESCROW_AGENT_URL;

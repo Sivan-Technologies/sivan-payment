@@ -25,6 +25,7 @@ import { aceSupportRoutes } from '../ace/api/ace-support.routes.js';
 import { ngnRoutes } from '../ngn/api/ngn.routes.js';
 import { ratesRoutes } from '../rates/api/rates.routes.js';
 import { paystackUtilityRoutes } from '../ngn/api/paystackUtilityRoutes.js';
+import { nombaCheckoutRoutes } from '../ngn/api/nombaCheckoutRoutes.js';
 import { ghsRoutes } from '../ghs/api/ghs.routes.js';
 import { ghsAdminRoutes } from '../ghs/api/ghs.admin.routes.js';
 import { balanceRoutes } from '../balances/balance.routes.js';
@@ -115,6 +116,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await ngnRoutes(app);
   await ratesRoutes(app);
   await paystackUtilityRoutes(app);
+  await nombaCheckoutRoutes(app);
   await ghsRoutes(app);
   await ghsAdminRoutes(app);
   await balanceRoutes(app);
