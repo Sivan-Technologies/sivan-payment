@@ -1,6 +1,6 @@
 import type { SupplierPayoutCurrency } from '../database/types.js';
 
-export type SupplierExecutionProvider = 'bridge' | 'manual_treasury' | 'nomba' | 'eversend' | 'linkio' | 'circle' | 'yellowcard' | 'bvnk' | 'conduit';
+export type SupplierExecutionProvider = 'bridge' | 'manual_treasury' | 'nomba' | 'circle' | 'yellowcard' | 'bvnk' | 'conduit';
 export type SupplierExecutionMode = 'provider' | 'manual_review' | 'manual_treasury';
 
 export type SupplierProviderRoute = {

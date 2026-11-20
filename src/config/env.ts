@@ -300,7 +300,7 @@ const envSchema = z.object({
   // `if (name === 'breet')` branch. The registry could never be reached:
   // NGN_PROVIDER=breet failed this enum and the whole service refused to boot,
   // so the Breet integration was unreachable by configuration.
-  NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'breet']).default('mock'),
+  NGN_PROVIDER: z.enum(['mock', 'nomba', 'breet']).default('mock'),
   NGN_LIVE_PROVIDER_ENABLED: booleanFromEnv.default(false),
   // Breet - primary NGN provider. https://docs.breet.io
   // Sivan's own margin on the NGN rail, separate from the Bridge percentages.

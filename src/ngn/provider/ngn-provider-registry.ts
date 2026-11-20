@@ -1,6 +1,4 @@
 import { env } from '../../config/env.js';
-import { EversendNgnProvider } from './eversend.provider.js';
-import { LinkioNgnProvider } from './linkio.provider.js';
 import { MockNgnProvider } from './mock-ngn.provider.js';
 import { NombaNgnProvider } from './nomba.provider.js';
 import { BreetNgnProvider } from './breet.provider.js';
@@ -18,8 +16,6 @@ import type { NgnProviderAdapter } from './ngn-provider.js';
  * usable as one.
  */
 export function getNgnProvider(name: NgnProviderName = env.NGN_PROVIDER as NgnProviderName): NgnProviderAdapter {
-  if (name === 'linkio') return new LinkioNgnProvider();
-  if (name === 'eversend') return new EversendNgnProvider();
   if (name === 'nomba') return new NombaNgnProvider();
   if (name === 'breet') return new BreetNgnProvider();
   if (name === 'textile') return new TextileNgnProvider();

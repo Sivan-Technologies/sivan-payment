@@ -212,7 +212,7 @@ export async function ngnRoutes(app: FastifyInstance) {
     ensureOwnUser(request, userId);
 
     const breetProvider = new BreetNgnProvider();
-    await breetProvider.loadAssets().catch(() => {});
+    await breetProvider.loadAssets().catch(() => { });
 
     const envMode = breetEnvironment();
     const identifier = breetDepositAssetId('ethereum', 'eth', envMode) ?? (envMode === 'production' ? 'ETH' : 'ETH_TEST5');
@@ -262,7 +262,7 @@ export async function ngnRoutes(app: FastifyInstance) {
     ensureOwnUser(request, userId);
 
     const breetProvider = new BreetNgnProvider();
-    await breetProvider.loadAssets().catch(() => {});
+    await breetProvider.loadAssets().catch(() => { });
 
     const envMode = breetEnvironment();
     const identifier = breetDepositAssetId('ethereum', 'eth', envMode) ?? (envMode === 'production' ? 'ETH' : 'ETH_TEST5');
@@ -630,32 +630,32 @@ export async function ngnRoutes(app: FastifyInstance) {
       networks
         .filter((network) => gasEstimateUsd(String(network)) !== undefined)
         .map((network) => ({
-        network,
-        asset,
-        /**
-         * Sent so the client stops keeping its own copy of this table.
-         *
-         * The frontend had a duplicate TYPICAL_GAS_USD with its own silent
-         * $0.50 fallback, which could disagree with the server's floor - the UI
-         * would promise one fee while the quote was computed from another.
-         * One source, one number, no drift.
-         */
-        gasEstimateUsd: gasEstimateUsd(String(network)),
-        /** So the UI never has to render a raw slug like 'avalanche_c_chain'. */
-        label: networkDisplayLabel(String(network)),
+          network,
+          asset,
+          /**
+           * Sent so the client stops keeping its own copy of this table.
+           *
+           * The frontend had a duplicate TYPICAL_GAS_USD with its own silent
+           * $0.50 fallback, which could disagree with the server's floor - the UI
+           * would promise one fee while the quote was computed from another.
+           * One source, one number, no drift.
+           */
+          gasEstimateUsd: gasEstimateUsd(String(network)),
+          /** So the UI never has to render a raw slug like 'avalanche_c_chain'. */
+          label: networkDisplayLabel(String(network)),
 
-        // Surfaced per network because it is per ASSET, not global, and the
-        // user must see it before choosing where to send from.
-        //
-        // THE ENVIRONMENT MUST BE THE REAL ONE, NOT 'production'.
-        //
-        // Hardcoding it meant this endpoint advertised Breet's MAINNET
-        // minimum ($15) on the sandbox, where the enforced figure is $50. The
-        // UI showed "minimum $15", the user sent $20, and only on accepting
-        // the quote did they learn the true floor. A limit the product states
-        // and then does not honour is worse than no limit shown.
-        minimumDepositUsd: breetMinimumDepositUsd(network, asset, breetEnvironment()),
-      }));
+          // Surfaced per network because it is per ASSET, not global, and the
+          // user must see it before choosing where to send from.
+          //
+          // THE ENVIRONMENT MUST BE THE REAL ONE, NOT 'production'.
+          //
+          // Hardcoding it meant this endpoint advertised Breet's MAINNET
+          // minimum ($15) on the sandbox, where the enforced figure is $50. The
+          // UI showed "minimum $15", the user sent $20, and only on accepting
+          // the quote did they learn the true floor. A limit the product states
+          // and then does not honour is worse than no limit shown.
+          minimumDepositUsd: breetMinimumDepositUsd(network, asset, breetEnvironment()),
+        }));
 
     /**
      * Whether the withdraw screen may offer "I'll send crypto myself".
@@ -1166,7 +1166,7 @@ export async function ngnRoutes(app: FastifyInstance) {
     return { data: await retryNgnTransfer(id, (request as any).adminActor?.email || 'admin_api_key') };
   });
   app.post('/api/admin/ngn/webhooks/:provider', async (request) => {
-    const { provider } = request.params as { provider: 'mock' | 'linkio' | 'eversend' | 'nomba' | 'breet' };
+    const { provider } = request.params as { provider: 'mock' | 'nomba' | 'breet' };
     return { data: await recordNgnWebhook(provider, request.body, request.headers) };
   });
 }

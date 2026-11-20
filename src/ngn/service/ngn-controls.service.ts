@@ -33,8 +33,8 @@ export const updateNgnControlsSchema = z.object({
    */
   bankSettlementEnabled: z.boolean().optional(),
   virtualAccountEnabled: z.boolean().optional(),
-  activeProvider: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'breet']).optional(),
-  backupProvider: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'breet']).optional().nullable(),
+  activeProvider: z.enum(['mock', 'nomba', 'breet']).optional(),
+  backupProvider: z.enum(['mock', 'nomba', 'breet']).optional().nullable(),
   identityVerificationEnabled: z.boolean().optional(),
   externalFundingEnabled: z.boolean().optional(),
   offrampRevenueMode: z.enum(['sivan_fee_wallet', 'breet_markup', 'disabled']).optional(),
