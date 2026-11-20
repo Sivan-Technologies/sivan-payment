@@ -207,6 +207,58 @@ async function main() {
     console.log('Data Vend Status:', dataVendRes.status, dataVendData.code, dataVendData.description);
     console.log('Data Vend Response:', JSON.stringify(dataVendData?.data || dataVendData));
 
+    // 10. Testing Betting Providers
+    console.log('\n--- 10. Testing GET /v1/bill/betting/providers ---');
+    const bettingProvidersRes = await fetch(`${baseUrl}/v1/bill/betting/providers`, {
+      headers: {
+        accountId: accountId,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const bettingProvidersData = await bettingProvidersRes.json() as any;
+    console.log('Betting Providers Status:', bettingProvidersRes.status, bettingProvidersData.code, bettingProvidersData.description);
+    let sampleBettingId = 'bet9ja';
+    if (Array.isArray(bettingProvidersData.data) && bettingProvidersData.data.length > 0) {
+      console.log(`✓ Received ${bettingProvidersData.data.length} Betting providers. First 3:`, bettingProvidersData.data.slice(0, 3));
+      sampleBettingId = bettingProvidersData.data[0].id || bettingProvidersData.data[0].lookup_id || sampleBettingId;
+    } else {
+      console.log('Betting Providers Response:', JSON.stringify(bettingProvidersData));
+    }
+
+    // 11. Testing Betting Customer Lookup
+    console.log(`\n--- 11. Testing GET /v1/bill/betting/lookup?providerId=${sampleBettingId}&customerId=1234567890 ---`);
+    const bettingLookupRes = await fetch(`${baseUrl}/v1/bill/betting/lookup?providerId=${encodeURIComponent(sampleBettingId)}&customerId=1234567890`, {
+      headers: {
+        accountId: accountId,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const bettingLookupData = await bettingLookupRes.json() as any;
+    console.log('Betting Lookup Status:', bettingLookupRes.status, bettingLookupData.code, bettingLookupData.description);
+    console.log('Betting Customer Name:', JSON.stringify(bettingLookupData.data || bettingLookupData));
+
+    // 12. Testing Betting Wallet Funding (Payment)
+    console.log('\n--- 12. Testing POST /v2/bill/betting ---');
+    const bettingPayRes = await fetch(`${baseUrl}/v2/bill/betting`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        accountId: accountId,
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        bettingProvider: sampleBettingId,
+        merchantTxRef: `sivan_bet_${Date.now()}`,
+        phoneNumber: '09012345678',
+        payerName: 'John Doe',
+        amount: 2000,
+        customerId: '1234567890',
+      }),
+    });
+    const bettingPayData = await bettingPayRes.json() as any;
+    console.log('Betting Payment Status:', bettingPayRes.status, bettingPayData.code, bettingPayData.description);
+    console.log('Betting Payment Response:', JSON.stringify(bettingPayData?.data || bettingPayData));
+
   } catch (err: any) {
     console.error('Probe failed:', err.message || err);
   }

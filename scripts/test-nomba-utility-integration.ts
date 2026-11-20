@@ -23,8 +23,8 @@ async function run() {
   // 1. Nomba provider instantiation & capabilities
   const nomba = new NombaUtilityProvider();
   assert.strictEqual(nomba.name, 'nomba');
-  assert.deepStrictEqual(nomba.supports, ['electricity', 'cable_tv', 'airtime', 'data']);
-  console.log('✓ NombaUtilityProvider supports: [electricity, cable_tv, airtime, data]');
+  assert.deepStrictEqual(nomba.supports, ['electricity', 'cable_tv', 'airtime', 'data', 'betting']);
+  console.log('✓ NombaUtilityProvider supports: [electricity, cable_tv, airtime, data, betting]');
 
   // 2. Registry verification
   const regNomba = getUtilityProvider('nomba');
@@ -33,7 +33,8 @@ async function run() {
   assert.strictEqual(providerServes(regNomba, 'data'), true);
   assert.strictEqual(providerServes(regNomba, 'electricity'), true);
   assert.strictEqual(providerServes(regNomba, 'cable_tv'), true);
-  console.log('✓ Registry capability checks: Nomba serves airtime, data, electricity, cable_tv');
+  assert.strictEqual(providerServes(regNomba, 'betting'), true);
+  console.log('✓ Registry capability checks: Nomba serves airtime, data, electricity, cable_tv, betting');
 
   // 3. Routing hierarchy verification
   const routing = getUtilityRouting();
@@ -42,6 +43,7 @@ async function run() {
   console.log('Data chain:', routing.routes.data);
   console.log('Electricity chain:', routing.routes.electricity);
   console.log('Cable TV chain:', routing.routes.cable_tv);
+  console.log('Betting chain:', routing.routes.betting);
 
   assert.strictEqual(routing.routes.airtime[0], 'smeapi', 'Airtime primary must be smeapi');
   assert.ok(routing.routes.airtime.includes('nomba'), 'Airtime chain must include nomba fallback');
@@ -53,7 +55,8 @@ async function run() {
 
   assert.strictEqual(routing.routes.electricity[0], 'nomba', 'Electricity primary must be nomba');
   assert.strictEqual(routing.routes.cable_tv[0], 'nomba', 'Cable TV primary must be nomba');
-  console.log('✓ Routing matrix correctly prioritizes SME API with Nomba fallback for Telco, and Nomba primary for Bills');
+  assert.strictEqual(routing.routes.betting[0], 'nomba', 'Betting primary must be nomba');
+  console.log('✓ Routing matrix correctly prioritizes SME API with Nomba fallback for Telco, and Nomba primary for Bills & Betting');
 
   // 4. Data plan resolution for Nomba fallback
   const mockSmePlan = {

@@ -21,6 +21,7 @@ import type {
   ProviderElectricityResult,
   ProviderAirtimeResult,
   ProviderDataResult,
+  ProviderBettingResult,
 } from './utility-provider.interface.js';
 import type {
   DiscoCode,
@@ -28,6 +29,8 @@ import type {
   ElectricityInquiryResponse,
   TelcoOperator,
   DataPlanOption,
+  BettingProviderOption,
+  BettingInquiryResponse,
 } from '../types/paystackUtilityTypes.js';
 import { DISCO_DISPLAY_NAMES } from '../types/paystackUtilityTypes.js';
 
@@ -55,7 +58,7 @@ const SIVAN_TO_NOMBA_DISCO: Record<string, string> = {
 export class NombaUtilityProvider implements IUtilityProvider {
   readonly name: UtilityProviderName = 'nomba';
   readonly priority: number = 20; // Preferred for electricity and cable_tv; fallback for airtime and data
-  readonly supports: readonly UtilityServiceType[] = ['electricity', 'cable_tv', 'airtime', 'data'];
+  readonly supports: readonly UtilityServiceType[] = ['electricity', 'cable_tv', 'airtime', 'data', 'betting'];
 
   private tokenCache?: NombaTokenCache;
 
@@ -457,6 +460,86 @@ export class NombaUtilityProvider implements IUtilityProvider {
         res.message ||
         res.description ||
         (status === 'success' ? 'Cable TV subscription successful' : 'Cable TV subscription processing'),
+      rawPayload: res,
+    };
+  }
+
+  // -------------------------------------------------------------
+  // BETTING WALLET METHODS
+  // -------------------------------------------------------------
+
+  public async listBettingProviders(): Promise<BettingProviderOption[]> {
+    const path = '/v1/bill/betting/providers';
+    const res = await this.request<any>(path, { method: 'GET' });
+
+    const rawList = (Array.isArray(res.data) ? res.data : []) as any[];
+    return rawList.map((p) => ({
+      id: String(p.id || p.biller_id || p.lookup_id || '').toLowerCase().trim(),
+      name: String(p.name || p.id || 'Betting Platform'),
+      billerId: p.biller_id ? String(p.biller_id) : undefined,
+      lookupId: p.lookup_id ? String(p.lookup_id) : undefined,
+    }));
+  }
+
+  public async inquireBettingCustomer(
+    providerId: string,
+    customerId: string
+  ): Promise<BettingInquiryResponse> {
+    const cleanProvider = providerId.toLowerCase().trim();
+    const cleanCustomer = customerId.trim();
+    const path = `/v1/bill/betting/lookup?providerId=${encodeURIComponent(cleanProvider)}&customerId=${encodeURIComponent(cleanCustomer)}`;
+    const res = await this.request<any>(path, { method: 'GET' });
+
+    const customerName = typeof res.data === 'string' ? res.data : (res.data?.name || res.data?.customerName || 'Verified Bettor');
+
+    return {
+      customerId: cleanCustomer,
+      providerId: cleanProvider,
+      providerName: 'nomba',
+      customerName,
+    };
+  }
+
+  public async fundBettingWallet(
+    providerId: string,
+    customerId: string,
+    amountNgn: number,
+    phoneNumber: string | undefined,
+    payerName: string | undefined,
+    idempotencyKey: string
+  ): Promise<ProviderBettingResult> {
+    const cleanProvider = providerId.toLowerCase().trim();
+    const cleanCustomer = customerId.trim();
+    const merchantTxRef = idempotencyKey?.trim() || `sivan_bet_${Date.now()}`;
+
+    const body = {
+      bettingProvider: cleanProvider,
+      merchantTxRef,
+      phoneNumber: phoneNumber || '08000000000',
+      payerName: payerName || 'Sivan Customer',
+      amount: Math.round(amountNgn),
+      customerId: cleanCustomer,
+    };
+
+    const res = await this.request<any>('/v2/bill/betting', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    const data = res.data || {};
+    const status = res.code === '200' || res.code === '00' || data.status === 'SUCCESS' ? 'success' : 'failed';
+
+    return {
+      reference: merchantTxRef,
+      amountNgn,
+      customerId: cleanCustomer,
+      providerId: cleanProvider,
+      customerName: payerName,
+      status,
+      message:
+        res.message ||
+        res.description ||
+        (status === 'success' ? 'Betting wallet funded successfully' : 'Betting wallet funding processing'),
       rawPayload: res,
     };
   }

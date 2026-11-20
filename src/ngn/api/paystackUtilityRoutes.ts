@@ -22,6 +22,9 @@ import {
   fetchCableTvPlans,
   executeCableTvInquiry,
   executeCableTvPayment,
+  fetchBettingProviders,
+  executeBettingInquiry,
+  executeBettingPayment,
   getUserNgnBalance,
   fetchDataPlans,
   reconcileUnsettledUtilityPurchases,
@@ -138,6 +141,23 @@ const cableTvPaymentSchema = z.object({
   cableTvType: z.string().min(1, 'cableTvType is required'),
   customerId: z.string().min(4, 'Valid smartcard or IUC number is required'),
   amountNgn: z.number().int().min(1000, 'Minimum subscription amount is 1,000 NGN'),
+  payerName: z.string().optional(),
+  pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
+  channel: z.enum(['minipay', 'telegram', 'whatsapp', 'webapp']).optional().default('webapp'),
+});
+
+const bettingInquirySchema = z.object({
+  providerId: z.string().min(1, 'providerId is required (e.g. bet9ja, betking)'),
+  customerId: z.string().min(3, 'Valid betting customer ID is required'),
+});
+
+const bettingPaymentSchema = z.object({
+  userId: z.string().min(1, 'userId is required'),
+  providerId: z.string().min(1, 'providerId is required'),
+  customerId: z.string().min(3, 'Valid customer ID is required'),
+  amountNgn: z.number().int().min(100, 'Minimum betting funding amount is 100 NGN').max(50_000, 'Maximum betting funding amount is 50,000 NGN'),
+  phoneNumber: z.string().optional(),
   payerName: z.string().optional(),
   pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
@@ -433,6 +453,76 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       cableTvType: body.cableTvType,
       customerId: body.customerId,
       amountNgn: body.amountNgn,
+      payerName: body.payerName,
+      idempotencyKey,
+      channel: body.channel,
+    });
+
+    return reply.code(200).send({
+      status: 'success',
+      data: receipt,
+    });
+  });
+
+  /**
+   * GET /api/ngn/utility/betting/providers
+   * Lists supported sports betting and gaming providers (Bet9ja, SportyBet, 1960Bet, BetKing, etc.).
+   */
+  app.get(
+    '/api/ngn/utility/betting/providers',
+    async (
+      request: FastifyRequest<{ Querystring: { providerName?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const providers = await fetchBettingProviders(request.query.providerName);
+      return reply.code(200).send({
+        status: 'success',
+        data: {
+          providers,
+        },
+      });
+    }
+  );
+
+  /**
+   * GET /api/ngn/utility/betting/lookup
+   * Pre-flight customer ID verification against the bookmaker to resolve account name.
+   */
+  app.get(
+    '/api/ngn/utility/betting/lookup',
+    async (
+      request: FastifyRequest<{ Querystring: { providerId: string; customerId: string } }>,
+      reply: FastifyReply
+    ) => {
+      const query = parseBody(bettingInquirySchema, request.query);
+      const inquiry = await executeBettingInquiry({
+        providerId: query.providerId,
+        customerId: query.customerId,
+      });
+      return reply.code(200).send({
+        status: 'success',
+        data: inquiry,
+      });
+    }
+  );
+
+  /**
+   * POST /api/ngn/utility/betting/pay
+   * Funds betting account directly from Sivan spendable NGN balance with atomic hold.
+   */
+  app.post('/api/ngn/utility/betting/pay', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = parseBody(bettingPaymentSchema, request.body);
+    await requireSpendAuthorization(request, body.userId, body.pin);
+    const idempotencyKey =
+      body.idempotencyKey ||
+      (request.headers['x-idempotency-key'] as string | undefined) ||
+      (request.headers['idempotency-key'] as string | undefined);
+    const receipt = await executeBettingPayment({
+      userId: body.userId,
+      providerId: body.providerId,
+      customerId: body.customerId,
+      amountNgn: body.amountNgn,
+      phoneNumber: body.phoneNumber,
       payerName: body.payerName,
       idempotencyKey,
       channel: body.channel,

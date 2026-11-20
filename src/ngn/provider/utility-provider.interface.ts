@@ -13,6 +13,8 @@ import type {
   ElectricityInquiryResponse,
   DataPlanOption,
   AirtimeCashRate,
+  BettingProviderOption,
+  BettingInquiryResponse,
 } from '../types/paystackUtilityTypes.js';
 
 export type UtilityProviderName = 'paystack' | 'nomba' | 'flutterwave' | 'vtu_ng' | string;
@@ -103,10 +105,21 @@ export interface ProviderCableTvResult {
   rawPayload: unknown;
 }
 
-/** The fulfilment rails a provider can serve. Routing is per service. */
-export type UtilityServiceType = 'airtime' | 'data' | 'electricity' | 'cable_tv';
+export interface ProviderBettingResult {
+  reference: string;
+  amountNgn: number;
+  customerId: string;
+  providerId: string;
+  customerName?: string;
+  status: 'success' | 'failed';
+  message: string;
+  rawPayload: unknown;
+}
 
-export const UTILITY_SERVICE_TYPES: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity', 'cable_tv'];
+/** The fulfilment rails a provider can serve. Routing is per service. */
+export type UtilityServiceType = 'airtime' | 'data' | 'electricity' | 'cable_tv' | 'betting';
+
+export const UTILITY_SERVICE_TYPES: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity', 'cable_tv', 'betting'];
 
 export interface IUtilityProvider {
   readonly name: UtilityProviderName;
@@ -189,6 +202,22 @@ export interface IUtilityProvider {
     payerName: string | undefined,
     idempotencyKey: string
   ): Promise<ProviderCableTvResult>;
+
+  listBettingProviders?(): Promise<BettingProviderOption[]>;
+
+  inquireBettingCustomer?(
+    providerId: string,
+    customerId: string
+  ): Promise<BettingInquiryResponse>;
+
+  fundBettingWallet?(
+    providerId: string,
+    customerId: string,
+    amountNgn: number,
+    phoneNumber: string | undefined,
+    payerName: string | undefined,
+    idempotencyKey: string
+  ): Promise<ProviderBettingResult>;
 
   getAirtimeCashRate?(operator: TelcoOperator): Promise<AirtimeCashRate>;
   initiateAirtimeToCash?(input: AirtimeCashInitiateInput): Promise<AirtimeCashInitiateResult>;

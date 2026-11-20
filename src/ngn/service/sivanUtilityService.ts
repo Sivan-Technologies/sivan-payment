@@ -26,6 +26,10 @@ import {
   type ElectricityInquiryResponse,
   type ElectricityPaymentRequest,
   type CableTvPaymentRequest,
+  type BettingProviderOption,
+  type BettingInquiryRequest,
+  type BettingInquiryResponse,
+  type BettingPaymentRequest,
   type UtilityReceipt,
   type DataPlanOption,
   detectTelcoOperator,
@@ -47,6 +51,7 @@ import type {
   CableTvPlanOption,
   CableTvInquiryResponse,
   ProviderCableTvResult,
+  ProviderBettingResult,
 } from '../provider/utility-provider.interface.js';
 import { ensureUtilityRoutingLoaded } from './utility-routing.service.js';
 
@@ -1848,6 +1853,196 @@ export async function executeCableTvPayment(
         });
       } catch (err: any) {
         console.error('[CableTv] recordUtilityDebit error:', err);
+      }
+
+      return receipt;
+    }
+  );
+}
+
+/**
+ * Fetches available betting platforms (Bet9ja, SportyBet, 1960Bet, BetKing, etc.)
+ */
+export async function fetchBettingProviders(
+  preferredProviderName?: string
+): Promise<BettingProviderOption[]> {
+  await ensureUtilityRoutingLoaded();
+  if (preferredProviderName) {
+    const provider = getUtilityProvider(preferredProviderName);
+    if (typeof provider.listBettingProviders !== 'function') {
+      throw badRequest(`Provider "${preferredProviderName}" does not publish a betting providers catalog.`);
+    }
+    return provider.listBettingProviders();
+  }
+  const { result } = await executeForService(
+    'betting',
+    'listBettingProviders',
+    async (provider) => {
+      if (typeof provider.listBettingProviders !== 'function') {
+        throw new Error(`Provider ${provider.name} does not support listBettingProviders`);
+      }
+      return provider.listBettingProviders();
+    }
+  );
+  return result;
+}
+
+/**
+ * Validates betting customer ID (user ID) against the bookmaker.
+ */
+export async function executeBettingInquiry(
+  req: BettingInquiryRequest
+): Promise<BettingInquiryResponse> {
+  const controls = await getUtilitiesControls();
+  if (!controls.enabled || controls.maintenanceMode) {
+    throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+
+  if (!req.providerId || req.providerId.trim().length === 0) {
+    throw badRequest('Please provide a valid betting provider ID (e.g. bet9ja, betking).');
+  }
+
+  if (!req.customerId || req.customerId.trim().length < 3) {
+    throw badRequest('Please provide a valid betting account or customer ID.');
+  }
+
+  await ensureUtilityRoutingLoaded();
+  const { result, providerName } = await executeForService(
+    'betting',
+    'inquireBettingCustomer',
+    async (provider) => {
+      if (typeof provider.inquireBettingCustomer !== 'function') {
+        throw new Error(`Provider ${provider.name} does not support inquireBettingCustomer`);
+      }
+      return provider.inquireBettingCustomer(req.providerId.trim(), req.customerId.trim());
+    }
+  );
+
+  return {
+    ...result,
+    providerName,
+  };
+}
+
+/**
+ * Funds a betting platform account with atomic balance reservation.
+ */
+export async function executeBettingPayment(
+  req: BettingPaymentRequest
+): Promise<UtilityReceipt> {
+  const controls = await getUtilitiesControls();
+  if (!controls.enabled || controls.maintenanceMode) {
+    throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+
+  if (req.amountNgn < 100 || req.amountNgn > 50_000) {
+    throw badRequest('Betting funding amount must be between 100 NGN and 50,000 NGN.');
+  }
+
+  const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
+
+  const { cachedReceipt, fingerprint } = await validateAndResolveIdempotency({
+    idempotencyKey: req.idempotencyKey,
+    userId: resolvedUserId,
+    serviceType: 'betting',
+    recipient: req.customerId.trim(),
+    amountNgn: req.amountNgn,
+    operatorOrDisco: req.providerId,
+  });
+  if (cachedReceipt) return cachedReceipt;
+
+  const reservationId = req.idempotencyKey
+    ? `res_${req.idempotencyKey}`
+    : `res_bet_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  return withBalanceReservation(
+    resolvedUserId,
+    req.amountNgn,
+    reservationId,
+    'betting',
+    fingerprint,
+    req.idempotencyKey,
+    {
+      recipient: req.customerId.trim(),
+      operatorOrDisco: req.providerId,
+    },
+    async (balance: number) => {
+      await ensureUtilityRoutingLoaded();
+      const bettingKey = req.idempotencyKey
+        ? `sivan_bet_${req.idempotencyKey}`
+        : newIdempotencyKey('betting', resolvedUserId);
+
+      const { result, providerName } = await executeForService(
+        'betting',
+        'fundBettingWallet',
+        async (provider) => {
+          if (typeof provider.fundBettingWallet !== 'function') {
+            throw new Error(`Provider ${provider.name} does not support fundBettingWallet`);
+          }
+          return provider.fundBettingWallet(
+            req.providerId.trim(),
+            req.customerId.trim(),
+            req.amountNgn,
+            req.phoneNumber,
+            req.payerName,
+            bettingKey
+          );
+        }
+      );
+
+      const now = new Date().toISOString();
+      const remaining = balance - req.amountNgn;
+
+      const lines = [
+        'Sivan Payment Ai . Betting Topup Receipt',
+        '----------------------------------------',
+        `Bookmaker: ${req.providerId.toUpperCase()}`,
+        `Account ID: ${req.customerId}`,
+        `Customer Name: ${result.customerName || req.payerName || 'Verified Bettor'}`,
+        `Amount Funded: ${req.amountNgn.toLocaleString()} NGN`,
+        'Platform Fee: 0 NGN (Free)',
+        `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
+        `Remaining Balance: ${remaining.toLocaleString()} NGN`,
+        `Fulfillment Rail: ${providerName.toUpperCase()}`,
+        'Status: Account Funded Successfully',
+        `Reference: ${result.reference}`,
+        `Date: ${formatTimestamp(now)}`,
+        '----------------------------------------'
+      ];
+
+      const receipt: UtilityReceipt = {
+        success: true,
+        serviceType: 'betting',
+        providerName,
+        operatorOrDisco: req.providerId.toUpperCase(),
+        recipientOrMeter: req.customerId,
+        customerName: result.customerName || req.payerName,
+        amountNgn: req.amountNgn,
+        feeNgn: 0,
+        totalDebitedNgn: req.amountNgn,
+        reference: result.reference,
+        timestamp: now,
+        formattedText: lines.join('\n'),
+      };
+      cacheReceipt(req.idempotencyKey, receipt, resolvedUserId, fingerprint);
+
+      try {
+        await recordUtilityDebit({
+          userId: resolvedUserId,
+          providerName,
+          serviceType: 'betting',
+          reference: result.reference,
+          amountNgn: req.amountNgn,
+          reservationId,
+          idempotencyKey: req.idempotencyKey,
+          rawPayload: {
+            ...(typeof result.rawPayload === 'object' && result.rawPayload !== null ? result.rawPayload : {}),
+            idempotencyKey: req.idempotencyKey,
+            fingerprint,
+          },
+        });
+      } catch (err: any) {
+        console.error('[Betting] recordUtilityDebit error:', err);
       }
 
       return receipt;

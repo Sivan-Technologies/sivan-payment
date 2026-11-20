@@ -85,6 +85,40 @@ export interface CableTvPaymentRequest {
   channel?: 'minipay' | 'telegram' | 'whatsapp' | 'webapp' | string;
 }
 
+export interface BettingProviderOption {
+  id: string;
+  name: string;
+  billerId?: string;
+  lookupId?: string;
+}
+
+export interface BettingInquiryRequest {
+  userId?: string;
+  providerId: string;
+  customerId: string;
+  preferredProviderName?: string;
+}
+
+export interface BettingInquiryResponse {
+  customerId: string;
+  providerId: string;
+  providerName: string;
+  customerName: string;
+}
+
+export interface BettingPaymentRequest {
+  userId: string;
+  providerId: string;
+  customerId: string;
+  amountNgn: number;
+  phoneNumber?: string;
+  payerName?: string;
+  pin?: string;
+  providerName?: string;
+  idempotencyKey?: string;
+  channel?: 'minipay' | 'telegram' | 'whatsapp' | 'webapp' | string;
+}
+
 export interface DataPlanOption {
   planId: string;
   name: string;
@@ -127,7 +161,7 @@ export interface AirtimeCashSession {
 
 export interface UtilityReceipt {
   success: boolean;
-  serviceType: 'airtime' | 'data' | 'electricity' | 'airtime_cash' | 'cable_tv';
+  serviceType: 'airtime' | 'data' | 'electricity' | 'airtime_cash' | 'cable_tv' | 'betting';
   providerName: string;
   operatorOrDisco: string;
   recipientOrMeter: string;

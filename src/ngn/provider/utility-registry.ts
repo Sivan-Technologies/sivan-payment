@@ -174,6 +174,7 @@ export const DEFAULT_UTILITY_ROUTING: UtilityRoutingConfig = {
     data: ['smeapi', 'nomba'],
     electricity: ['nomba', 'paystack'],
     cable_tv: ['nomba'],
+    betting: ['nomba'],
   },
   failover: {
     airtime: true,
@@ -182,6 +183,7 @@ export const DEFAULT_UTILITY_ROUTING: UtilityRoutingConfig = {
     // provider is how a customer ends up paying twice for one token.
     electricity: false,
     cable_tv: false,
+    betting: false,
   },
 };
 
@@ -243,6 +245,7 @@ const METHOD_FOR_SERVICE: Record<UtilityServiceType, Array<keyof IUtilityProvide
   data: ['purchaseDataBundle'],
   electricity: ['inquireElectricityMeter', 'payElectricityBill'],
   cable_tv: ['inquireCableTv', 'payCableTv'],
+  betting: ['inquireBettingCustomer', 'fundBettingWallet'],
 };
 
 /** True when a provider both declares a service and implements its methods. */
