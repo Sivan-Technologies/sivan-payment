@@ -1,6 +1,6 @@
-# Sivan Future Build Specification: Celo Direct Bank Off-Ramp and Multi-Currency Rail Architecture
+# Sivan Future Build Specification: Celo Direct Bank Off-Ramp, Dialing-Prefix Country Isolation, and Multi-Currency Rail Architecture
 
-Document Version: 1.0.0
+Document Version: 2.0.0
 Status: Architecture Review & Technical Specification
 Category: Phase 2 / Phase 3 Multi-Currency Settlement Roadmap
 Author: Samson Micheal (Founder & Technical Lead, Sivan Technologies)
@@ -17,12 +17,14 @@ Compliance Email: sivantechnology@gmail.com
 
 This specification defines the architectural design, user experience flow, balance auto-detection, and provider routing engine for direct bank off-ramping from Celo assets (USDC, USDT, cNGN, wBRL, wARS) into national commercial bank accounts across emerging markets.
 
-The central product principle of this architecture is Country-First Off-Ramping:
-1. Everyday users do not navigate complex token swaps, liquidity pools, or blockchain bridges.
-2. Sivan payment Ai automatically detects the user's available Celo balance (USDC or USDT).
-3. The user simply selects their destination bank country (Nigeria, Brazil, Argentina).
-4. Sivan payment Ai handles all asset absorption, RFQ pricing, on-chain settlement on Celo, and local bank clearing behind the scenes.
-5. In addition to direct bank off-ramping, users can choose an In-App Balance Swap to convert and hold local digital currencies (cNGN, wBRL, wARS) directly inside their Sivan spendable balance.
+The central product principle of this architecture is Dialing-Prefix Country Isolation and 1-Tap Localized Off-Ramping:
+1. Everyday users do not navigate complex token swaps, liquidity pools, or irrelevant foreign rails.
+2. Sivan payment Ai automatically detects the user's country from their international dialing prefix (+234 for Nigeria, +55 for Brazil, +54 for Argentina).
+3. A Brazilian user never sees NIBSS or Nigerian banks; a Nigerian user never sees Pix keys. Each user is instantly routed to their native banking rail.
+4. Sivan payment Ai automatically detects the user's available Celo balance (USDC or USDT).
+5. Sivan payment Ai handles all asset absorption, RFQ pricing, on-chain settlement on Celo, and local bank clearing behind the scenes.
+6. A secondary "Change Destination Country" action allows cross-border workers and freelancers to send to another country on demand.
+7. In addition to direct bank off-ramping, users can choose an In-App Balance Swap to convert and hold local digital currencies (cNGN, wBRL, wARS) directly inside their Sivan spendable balance.
 
 ---
 
@@ -32,17 +34,18 @@ The central product principle of this architecture is Country-First Off-Ramping:
 When a user initiates a withdrawal in WhatsApp, Telegram, MiniPay, or the Web App:
 - Sivan payment Ai inspects the user's connected wallet and internal ledger balances across active networks.
 - If the user holds Celo USDC, Celo USDT, or cNGN, the interface automatically detects these withdrawable assets.
-- Example Prompt: "Available on Celo: $25.00 USDC. Where would you like to send your funds?"
+- Example Prompt: "Available on Celo: $30.00 USDC. Ready for instant bank withdrawal."
 
-### Principle 2: Country-First Mental Model
-Rather than asking users to pick an ERC-20 token or contract address first, Sivan structures the withdrawal around their real-world goal:
-- Destination: Local Bank Account
-- Select Country:
-  - Nigeria (₦ NGN via NIBSS Instant Payment)
-  - Brazil (R$ BRL via Central Bank Pix)
-  - Argentina ($ ARS via CBU / CVU Bank Transfer)
+### Principle 2: Dialing-Prefix Country Isolation & 1-Tap Localized UX
+Rather than displaying a cluttered multi-country dropdown, Sivan isolates the interface by the user's verified phone country code:
+- +234... (Nigeria): Maps directly to Nigerian Commercial Bank (NIBSS / NIP). Zero mentions of Pix or CVU.
+- +55... (Brazil): Maps directly to Transferência Pix Instantânea in Portuguese. Zero mentions of NIBSS.
+- +54... (Argentina): Maps directly to Transferencia Bancaria / CVU in Spanish. Zero mentions of NIBSS or Pix.
+- +254... (Kenya): Maps directly to Safaricom M-PESA.
+- +233... (Ghana): Maps directly to MTN MoMo / Telecel Cash.
+- On Web and MiniPay, Sivan identifies the user from their registered country profile or IP geolocation.
 
-### Principle 3: Textile FX Direct Asset Absorption (Zero Manual Swap)
+### Principle 3: Textile FX Direct Asset Absorption (Zero Manual Swap for Nigeria)
 For the Nigerian corridor:
 - Textile Credit (Textile FX) operates as Sivan's institutional liquidity engine on Celo.
 - Textile FX directly accepts Celo USDC and Celo USDT as sell tokens.
@@ -54,6 +57,10 @@ Because no single provider bridges every emerging market under one API:
 - Nigeria Corridor (NGN): Routed via Textile Credit (and Paystack/Breet fallback).
 - Brazil Corridor (BRL): Routed via Celo Pix rails / Transfero. Settles directly to Nubank, Inter, or Itaú via Pix Key (CPF, phone, or email) in under 30 seconds.
 - Argentina Corridor (ARS): Routed via LatAm Celo partners / Ripio / Mento rails. Settles directly to Mercado Pago, CVU, or CBU accounts.
+
+### Principle 5: Cross-Border Override on Demand
+While the default flow is 100% localized to the user's registered country, a clean secondary action [ 🌍 Change Destination Country ] is provided at the bottom of the payout card:
+- Enables a Nigerian freelancer receiving Celo USDC from a Brazilian or Argentine employer to send funds directly to an overseas family member or partner when explicitly requested.
 
 ---
 
@@ -68,74 +75,62 @@ Sivan payment Ai provides two distinct paths depending on whether the user wants
           │                                                     │
    [ Path A: Direct Bank Off-Ramp ]              [ Path B: Crypto / Balance Swap ]
           │                                                     │
-   Select Country:                               Select Network & Asset:
-   • 🇳🇬 Nigeria (NIBSS / NIP)                    • Celo -> USDC, USDT, cNGN, wBRL, wARS
-   • 🇧🇷 Brazil (Pix)                                            │
-   • 🇦🇷 Argentina (CBU/CVU)                       ┌──────────────┴──────────────┐
+   Automatic Country Detection:                  Select Network & Asset:
+   • +234 -> NIBSS (Nigeria)                     • Celo -> USDC, USDT, cNGN, wBRL, wARS
+   • +55  -> Pix (Brazil)                                       │
+   • +54  -> CVU/CBU (Argentina)                 ┌──────────────┴──────────────┐
           │                                      │                             │
    Auto-Detect Celo Asset                 [ Send to External ]          [ Swap to Sivan ]
    (USDC / USDT / cNGN)                   [ Celo 0x Address  ]          [ Spendable Balance ]
           │                                                                    │
-   Live Firm Quote & Name Inquiry                                       Instant Mento Swap
+   Live Firm Quote & Account Resolution                                 Instant Mento Swap
           │                                                             Hold Local Stablecoin
    PIN Authorization & Payout
-   (Bank delivery under 1-2 mins)
+   (Bank delivery under 1-2 mins via NIP,
+    or under 30 seconds via Pix)
 ```
 
 ---
 
-## 4. End-to-End User Flow: Nigeria (Textile FX)
+## 4. End-to-End User Flow: Nigeria (+234 User)
 
-### Step 1: Trigger & Auto-Detection
-User types "withdraw" or taps the "Withdraw" button in WhatsApp:
+### Step 1: 1-Tap Trigger & Balance Detection
+A Nigerian user with phone number +2348012345678 taps "Withdraw to Bank":
 ```
-Sivan payment Ai . Withdraw Funds
+Sivan payment Ai . Withdraw to Bank 🇳🇬
 
-Available Spendable Balance:
-• Celo Mainnet: $30.00 USDC
+Available Balance on Celo: $30.00 USDC
+Official Live Rate: 1 USDC = ₦1,450.00
+Gross Payout: ₦43,500.00
+Platform Fee: ₦300.00
+Net Payout: ₦43,200.00
 
-Select withdrawal destination:
-[ 🏦 Local Bank Account ]
-[ 🌐 External Crypto Wallet ]
-[ 🔄 Swap Balance ]
-```
+Payout Rail: Nigerian Commercial Bank (NIBSS / NIP)
+Settlement Speed: Under 1 to 2 minutes
 
-### Step 2: Country Selection
-User selects "Local Bank Account":
-```
-Sivan payment Ai . Select Bank Country
+Enter your 10-digit NUBAN account number:
+(or reply SAVED to use GTBank •••5678)
 
-• 🇳🇬 Nigeria . Nigerian Naira (NIBSS / NIP)
-• 🇧🇷 Brazil . Brazilian Real (Pix Instant)
-• 🇦🇷 Argentina . Argentine Peso (CBU / CVU)
-
-Reply 1 for Nigeria, 2 for Brazil, 3 for Argentina:
+[ 🌍 Change Destination Country ]
 ```
 
-### Step 3: Account Resolution & Live Quoting
-User selects Nigeria and enters their 10-digit NUBAN account:
-- Sivan calls Textile FX POST /v2/ramp/banks/resolve to verify account name.
-- Sivan queries Textile FX GET /rfq/preview for live rate: 1 USDC = ₦1,450.
+### Step 2: Live Account Resolution
+User replies: `0123456789` and selects GTBank from the instant list:
+- Sivan calls Textile FX POST /v2/ramp/banks/resolve to verify the beneficiary name.
+- Verified Name: Samson Micheal
 ```
-Sivan payment Ai . Confirm Bank Payout 🇳🇬
+Sivan payment Ai . Confirm Payout 🇳🇬
 
-You are withdrawing:
-• Amount: 30.00 USDC
-• Paying From: Celo Network
-• Live Rate: 1 USDC = ₦1,450.00
-• Protocol Fee: ₦300.00
-• Net Payout: ₦43,200.00
+Recipient: Samson Micheal
+Bank: Guaranty Trust Bank (GTBank)
+Account: 0123456789
+Net Amount: ₦43,200.00
+Deduction: 30.00 USDC from Celo Balance
 
-Destination:
-• Bank: Guaranty Trust Bank (GTBank)
-• Account: 0123456789
-• Name: Samson Micheal
-• Settlement Speed: Under 1 to 2 minutes via NIBSS
-
-Enter your 4-digit Sivan PIN to confirm:
+Enter your 4-digit Sivan PIN to authorize:
 ```
 
-### Step 4: Execution & Settlement
+### Step 3: Execution & Settlement
 1. User enters PIN.
 2. Sivan initiates Celo transfer of 30 USDC to Textile Credit settlement address.
 3. Textile Credit detects Celo on-chain confirmation (1 to 2 seconds).
@@ -144,34 +139,68 @@ Enter your 4-digit Sivan PIN to confirm:
 
 ---
 
-## 5. End-to-End User Flow: Brazil (Celo Pix Rail)
+## 5. End-to-End User Flow: Brazil (+55 User)
 
-### Step 1: Country & Pix Key
-User selects Brazil as the destination country:
-- Sivan prompts for Pix Key (CPF, Phone Number, Email, or Random EVP Key).
+### Step 1: 1-Tap Trigger & Pix Rail Display
+A Brazilian user with phone number +5511987654321 taps "Withdraw to Bank":
 ```
-Sivan payment Ai . Brazilian Pix Payout 🇧🇷
+Sivan payment Ai . Saque para Conta Bancária 🇧🇷
 
-Available Balance: $25.00 USDC on Celo
-Live Rate: 1 USDC = R$ 5.80 BRL
-Net Payout: R$ 143.55 BRL
+Saldo Disponível no Celo: $30.00 USDC
+Cotação Comercial: 1 USDC = R$ 5.75 BRL
+Taxa de Serviço: R$ 1.50 BRL
+Valor a Receber: R$ 171.00 BRL
 
-Please enter your Pix Key (CPF, Phone, or Email):
+Método de Pagamento: Transferência Pix Instantânea
+Velocidade de Liquidação: Menos de 30 segundos
+
+Por favor, insira sua Chave Pix (CPF, Telefone ou E-mail):
+
+[ 🌍 Mudar País de Destino ]
 ```
 
-### Step 2: Key Resolution & Payout
+### Step 2: Pix Key Resolution & Payout
 1. User enters Pix Key (e.g. CPF 123.456.789-00).
-2. Sivan resolves Pix Key via Brazil Central Bank SPI directory and confirms recipient name.
-3. User enters PIN.
+2. Sivan resolves the Pix Key via Brazil Central Bank SPI directory and confirms the recipient's legal name.
+3. User enters their 4-digit Sivan PIN.
 4. Sivan executes on-chain transfer of USDC or swaps to wBRL/cREAL on Celo.
-5. Pix payout rail dispatches funds directly to the user's Brazilian bank (Nubank, Inter, etc.).
+5. Pix payout rail dispatches funds directly to the user's Brazilian bank (Nubank, Inter, Itaú).
 6. Funds arrive in under 30 seconds via Pix.
 
 ---
 
-## 6. End-to-End User Flow: In-App Balance Swap
+## 6. End-to-End User Flow: Argentina (+54 User)
 
-For users who do not want to off-ramp to a bank, but want to hold local stablecoins inside Sivan:
+### Step 1: 1-Tap Trigger & CVU Rail Display
+An Argentine user with phone number +5491123456789 taps "Withdraw to Bank":
+```
+Sivan payment Ai . Retiro a Cuenta Bancaria 🇦🇷
+
+Saldo Disponible en Celo: $30.00 USDC
+Cotización en Vivo: 1 USDC = $1,180.00 ARS
+Comisión del Protocolo: $350.00 ARS
+Monto Neto a Recibir: $35,050.00 ARS
+
+Medio de Pago: Transferencia Bancaria / CVU (Coelsa)
+Acreditación: Instantánea a 2 minutos
+
+Por favor, ingresá tu CBU, CVU o Alias:
+
+[ 🌍 Cambiar País de Destino ]
+```
+
+### Step 2: CBU Resolution & Payout
+1. User enters CVU or Alias (e.g. samson.sivan.uala).
+2. Sivan resolves the CVU account name via Coelsa / partner directory.
+3. User confirms with PIN.
+4. Sivan executes Celo transaction and initiates Argentine bank payout.
+5. Funds land in Mercado Pago, Ualá, or Argentine bank account in under 2 minutes.
+
+---
+
+## 7. End-to-End User Flow: In-App Balance Swap
+
+For users who do not want to off-ramp to a commercial bank, but want to hold regional stablecoins inside Sivan:
 1. User selects "Swap Balance".
 2. Source: 50 USDC on Celo.
 3. Target: cNGN, wBRL, or wARS.
@@ -182,7 +211,7 @@ For users who do not want to off-ramp to a bank, but want to hold local stableco
 
 ---
 
-## 7. Supported Token & Contract Registry on Celo Mainnet
+## 8. Supported Token & Contract Registry on Celo Mainnet
 
 | Corridor | Currency | Token | Contract Address on Celo | Decimals | Primary Off-Ramp Partner |
 |---|---|---|---|---|---|
@@ -196,7 +225,7 @@ For users who do not want to off-ramp to a bank, but want to hold local stableco
 
 ---
 
-## 8. Financial Integrity & Reconciliation Rules
+## 9. Financial Integrity & Reconciliation Rules
 
 Every off-ramp transaction across Celo and fiat clearing systems must adhere strictly to Sivan Workspace Rules:
 1. Idempotency: Every off-ramp request must generate a stable, deterministic idempotency key (e.g. wth_celo_UUID). Retrying an identical request must never initiate a duplicate payout.
@@ -207,11 +236,11 @@ Every off-ramp transaction across Celo and fiat clearing systems must adhere str
 
 ---
 
-## 9. Implementation Checklist (Future Activation)
+## 10. Implementation Checklist (Future Activation)
 
 When the Founder authorizes implementation, execute in this order:
 - [ ] Phase 1: Configure TEXTILE_CREDIT_API_KEY in sivan-payment/.env and sivan-escrow-agent/.env.
 - [ ] Phase 2: Wire textile-fx.service.ts into withdrawals.service.ts as the primary Celo off-ramp handler.
-- [ ] Phase 3: Add Celo balance auto-detection to whatsapp-bot/src/handlers/messageDispatcher.ts.
-- [ ] Phase 4: Add Country-First bank destination dropdowns to WhatsApp Meta Interactive Flows (sivan_withdrawal_flow.json).
+- [ ] Phase 3: Add Celo balance auto-detection and phone-prefix country routing to whatsapp-bot/src/handlers/messageDispatcher.ts.
+- [ ] Phase 4: Add Country-Isolated bank destination screens to WhatsApp Meta Interactive Flows (sivan_withdrawal_flow.json).
 - [ ] Phase 5: Test end-to-end off-ramp flow with a realistic 10 USDC test amount on Celo Mainnet.
