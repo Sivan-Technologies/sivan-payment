@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rawBody from 'fastify-raw-body';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { env } from './config/env.js';
 import { registerRoutes } from './api/routes.js';
 import { AppError } from './shared/errors.js';
@@ -304,10 +305,36 @@ export async function buildApp() {
   // duplicate with FST_ERR_CTP_ALREADY_PRESENT, which fails the boot rather
   // than silently doing the wrong thing. Good behaviour on its part.
   app.removeContentTypeParser('application/json');
-  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_request, body: Buffer, done) => {
-    const text = body?.toString('utf8') ?? '';
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body: Buffer, done) => {
+    let raw = body;
+    // Auto-decompress if gzipped (magic bytes 0x1f 0x8b or content-encoding)
+    if (raw && raw.length >= 2 && raw[0] === 0x1f && raw[1] === 0x8b) {
+      try {
+        raw = zlib.gunzipSync(raw);
+      } catch {
+        // keep original if decompression fails
+      }
+    } else if (String((request as any).headers?.['content-encoding'] || '').toLowerCase().includes('gzip')) {
+      try {
+        raw = zlib.gunzipSync(raw);
+      } catch {
+        // keep original
+      }
+    } else if (String((request as any).headers?.['content-encoding'] || '').toLowerCase().includes('deflate')) {
+      try {
+        raw = zlib.inflateSync(raw);
+      } catch {
+        // keep original
+      }
+    }
+
+    const text = raw?.toString('utf8') ?? '';
     if (!text.trim()) return done(null, {});
-    try { done(null, JSON.parse(text)); } catch (error) { done(error as Error, undefined); }
+    try {
+      done(null, JSON.parse(text));
+    } catch {
+      done(new AppError(400, 'Invalid JSON payload in request body', 'bad_request'), undefined);
+    }
   });
 
   app.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body: Buffer, done) => {
@@ -671,9 +698,9 @@ export async function buildApp() {
     }
 
     const err = error as Error & { statusCode?: number; code?: string; detail?: string; constraint?: string; table?: string; column?: string };
-    const statusCode = err.statusCode ?? 500;
-    captureError(err, { requestId: request.id, url: request.url, method: request.method });
+    const statusCode = err.statusCode ?? ((error as any)?.name === 'SyntaxError' ? 400 : 500);
     if (statusCode >= 500) {
+      captureError(err, { requestId: request.id, url: request.url, method: request.method });
       notifyOpsTelegram(err, { requestId: request.id, url: request.url, method: request.method });
     }
 
