@@ -9,6 +9,7 @@ import {
   resolveTextileBankAccount,
 } from '../../wallets/celo/textile-fx.service.js';
 import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
+import { offrampRegistry } from '../provider/offramp-registry.js';
 
 interface CashoutQuoteQuery {
   token?: string;
