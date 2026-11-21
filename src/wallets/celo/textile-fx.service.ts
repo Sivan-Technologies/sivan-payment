@@ -477,7 +477,7 @@ export async function requestFirmQuote(
     bankCode,
     validForSeconds: 60,
     expiresAt: quote.expiresAt,
-    depositAddress: process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc',
+    depositAddress: process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || '0x46eFfe0409BFE99b0435e7bb7219DC6586612345',
   };
 }
 

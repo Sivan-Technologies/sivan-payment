@@ -4,10 +4,9 @@ export { toDataSuffix, fromDataSuffix };
 
 /**
  * Official Sivan AI Hackathon Attribution Tag on Celo Mainnet.
- * Cryptographically derived from Sivan-Technologies/Sivan and registered
- * with Celo Builders for the Agents at Work Hackathon.
+ * Registered with Loops House for Agents Open for Business.
  */
-export const SIVAN_CELO_ATTRIBUTION_TAG = 'celo_bafcc2e56bd7';
+export const SIVAN_CELO_ATTRIBUTION_TAG = process.env.CELO_ATTRIBUTION_TAG || 'celo_bdb587d550be';
 
 /**
  * Appends the ERC-8021 attribution suffix to Celo transaction calldata.

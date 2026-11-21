@@ -213,6 +213,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1086.0",
     "@celo/attribution-tags": "^0.3.0",
     "@fastify/cors": "latest",
+    "@selfxyz/agent-sdk": "^0.3.1",
     "@sentry/node": "^10.65.0",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.98.4",

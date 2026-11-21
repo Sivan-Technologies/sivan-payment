@@ -26,7 +26,7 @@ import {
   getEffectiveOfframpFeeConfig,
 } from '../../wallets/celo/textile-fx.service.js';
 
-const SIVAN_CELO_OFFRAMP_VAULT = '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc';
+const SIVAN_CELO_OFFRAMP_VAULT = process.env.SIVAN_CELO_AGENT_ADDRESS || '0x46eFfe0409BFE99b0435e7bb7219DC6586612345';
 const TEXTILE_CELO_SWAP_ROUTER = '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3';
 
 function getDepositAddress(): string {

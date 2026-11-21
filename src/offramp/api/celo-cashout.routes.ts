@@ -11,6 +11,10 @@ import {
 } from '../../wallets/celo/textile-fx.service.js';
 import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 import { offrampRegistry } from '../provider/offramp-registry.js';
+import {
+  verifyFastifyAgentRequest,
+  assertSelfAgentLimit,
+} from '../../security/self-agent-verifier.service.js';
 
 interface CashoutQuoteQuery {
   token?: string;
@@ -32,8 +36,8 @@ interface CashoutExecuteBody {
 // Canonical Textile Swap settlement contract on Celo Mainnet (UniswapX LimitOrderReactor)
 const TEXTILE_CELO_SWAP_ROUTER = process.env.TEXTILE_SWAP_ROUTER_ADDRESS || '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3';
 
-// Official Sivan Agent #9827 Celo Mainnet Treasury for Off-Ramp Liquidity Collection
-const SIVAN_CELO_OFFRAMP_VAULT = '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc';
+// Official Sivan Agent #10089 Celo Mainnet Treasury for Off-Ramp Liquidity Collection
+const SIVAN_CELO_OFFRAMP_VAULT = process.env.SIVAN_CELO_AGENT_ADDRESS || '0x46eFfe0409BFE99b0435e7bb7219DC6586612345';
 
 function getTextileOfframpDepositAddress(): string {
   const addr = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS;
@@ -167,6 +171,13 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
 
       if (!bankAccount || bankAccount.length !== 10) {
         return reply.code(400).send({ error: 'Valid 10-digit Nigerian NUBAN bank account is required.' });
+      }
+
+      // Enforce Self Agent ID verification for Celo Off-Ramp
+      const selfVerification = await verifyFastifyAgentRequest(request);
+      const limitCheck = assertSelfAgentLimit(selfVerification, Number(amount || 0), 'CeloFiatOfframp');
+      if (!limitCheck.allowed) {
+        return reply.code(403).send(limitCheck.errorResponse);
       }
 
       request.log.info({

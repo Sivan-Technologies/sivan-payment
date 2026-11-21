@@ -12,6 +12,13 @@ import {
   getAgreementControls,
   isCreationAllowed,
 } from '../agreements/agreement-controls.service.js';
+import {
+  verifyFastifyAgentRequest,
+  assertSelfAgentLimit,
+  CANONICAL_SELF_REGISTRY_CELO,
+  UNVERIFIED_TRANSACTION_LIMIT_USD,
+  VERIFIED_TRANSACTION_LIMIT_USD,
+} from '../security/self-agent-verifier.service.js';
 
 export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // Public developer health check (no auth needed)
@@ -63,12 +70,21 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
         status: 'active',
         agent: {
           name: 'Sivan AI',
-          agentId: 9827,
+          agentId: 10089,
           network: 'celo',
           chainId: 42220,
-          walletAddress: '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc',
-          attributionTag: 'celo_bafcc2e56bd7',
-          registryUrl: 'https://8004scan.io/agents/celo/9827',
+          walletAddress: '0x46eFfe0409BFE99b0435e7bb7219DC6586612345',
+          attributionTag: 'celo_bdb587d550be',
+          registryUrl: 'https://8004scan.io/agents/celo/10089',
+        },
+        selfAgentId: {
+          standard: 'ERC-8004 / Self Protocol Proof-of-Human',
+          registryAddress: CANONICAL_SELF_REGISTRY_CELO,
+          network: 'celo-mainnet',
+          tiers: {
+            verified: `Up to $${VERIFIED_TRANSACTION_LIMIT_USD} USD limit per tx, full access to Service Agreements & fiat off-ramps`,
+            unverified: `Up to $${UNVERIFIED_TRANSACTION_LIMIT_USD} USD limit, micro-queries & indicative quotes`,
+          },
         },
         supportedMethods: ['POST'],
         capabilities: [
@@ -83,7 +99,7 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
           prompt: 'Transfer 5 USDC on Celo to 0x...',
           tool: 'sivan_create_payment_link',
           params: {
-            destinationAddress: '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc',
+            destinationAddress: '0x46eFfe0409BFE99b0435e7bb7219DC6586612345',
             amount: 5,
             network: 'celo',
             currency: 'usdc',
@@ -92,19 +108,36 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
       });
     }
 
+    const selfVerification = await verifyFastifyAgentRequest(req);
     const body = req.body || {};
     const toolName = body.tool || body.name || (body.method ? String(body.method).replace(/^tools\//, '') : undefined);
     const toolArgs = body.params || body.arguments || body.args || body;
 
     if (toolName) {
+      // Enforce Self Agent ID verification for restricted tools or amounts exceeding unverified threshold
+      const requestedAmount = parseFloat(toolArgs?.amount || '0');
+      const limitCheck = assertSelfAgentLimit(selfVerification, requestedAmount, toolName);
+      if (!limitCheck.allowed) {
+        return reply.code(403).send({
+          status: 'error',
+          ...limitCheck.errorResponse,
+          selfVerification,
+        });
+      }
+
       try {
         const result = await mcpServerEngine.executeTool(toolName, toolArgs);
         return reply.code(200).send({
           status: 'success',
           agent: {
             name: 'Sivan AI',
-            agentId: 9827,
-            attributionTag: 'celo_bafcc2e56bd7',
+            agentId: 10089,
+            attributionTag: 'celo_bdb587d550be',
+          },
+          selfVerification: {
+            isVerified: selfVerification.isVerified,
+            tier: selfVerification.tier,
+            maxTransactionLimitUsd: selfVerification.maxTransactionLimitUsd,
           },
           tool: toolName,
           result,
@@ -114,8 +147,12 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
           status: 'error',
           agent: {
             name: 'Sivan AI',
-            agentId: 9827,
-            attributionTag: 'celo_bafcc2e56bd7',
+            agentId: 10089,
+            attributionTag: 'celo_bdb587d550be',
+          },
+          selfVerification: {
+            isVerified: selfVerification.isVerified,
+            tier: selfVerification.tier,
           },
           error: err.message || 'Execution failed',
         });
@@ -128,18 +165,51 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
       status: 'success',
       agent: {
         name: 'Sivan AI',
-        agentId: 9827,
+        agentId: 10089,
         network: 'celo',
-        attributionTag: 'celo_bafcc2e56bd7',
+        attributionTag: 'celo_bdb587d550be',
+      },
+      selfVerification: {
+        isVerified: selfVerification.isVerified,
+        tier: selfVerification.tier,
+        maxTransactionLimitUsd: selfVerification.maxTransactionLimitUsd,
       },
       input: prompt,
-      response: 'Sivan Payment AI processed request for agent #9827. Multi-chain zero-gas settlement and Service Agreement protocol active.',
+      response: 'Sivan Payment AI processed request for agent #10089. Multi-chain zero-gas settlement and Service Agreement protocol active.',
       availableTools: SIVAN_MCP_TOOLS.map((t) => t.name),
     });
   };
 
   app.get('/api/v1/agent/invoke', agentInvokeHandler);
   app.post('/api/v1/agent/invoke', agentInvokeHandler);
+
+  // Self Agent ID Proof Status Check
+  app.get('/api/v1/agent/self-status', async (req: any, reply: any) => {
+    const outcome = await verifyFastifyAgentRequest(req);
+    return reply.code(200).send({
+      status: 'ok',
+      verification: outcome,
+    });
+  });
+
+  // Self Agent ID Re-Auth & Universal Deep Link
+  app.get<{ Querystring: { agentId?: string; chainId?: string; registry?: string } }>(
+    '/api/v1/agent/refresh',
+    async (req, reply) => {
+      const agentId = req.query.agentId || '10089';
+      const celoChainId = req.query.chainId || '42220';
+      const registry = req.query.registry || CANONICAL_SELF_REGISTRY_CELO;
+      const universalLink = `https://self.xyz/verify?agentId=${agentId}&chainId=${celoChainId}&registry=${registry}`;
+      return reply.code(200).send({
+        status: 'ok',
+        agentId: Number(agentId),
+        chainId: Number(celoChainId),
+        registryAddress: registry,
+        universalLink,
+        message: 'Open this link in the Self mobile app to refresh or claim your human-backed agent proof.',
+      });
+    }
+  );
 
   // Model Context Protocol (MCP) JSON-RPC 2.0 Handler
   app.post<{ Body: McpJsonRpcRequest }>('/mcp', async (req, reply) => {
@@ -194,6 +264,12 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
     authedRoutes.post<{ Body: DeveloperTransferRequest }>(
       '/api/v1/developer/transfers',
       async (req, reply) => {
+        const selfVerification = await verifyFastifyAgentRequest(req);
+        const limitCheck = assertSelfAgentLimit(selfVerification, req.body?.amount || 0, 'ProgrammaticTransfer');
+        if (!limitCheck.allowed) {
+          return reply.code(403).send(limitCheck.errorResponse);
+        }
+
         const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
         const result = await developerGatewayService.executeProgrammaticTransfer(req.body, idempotencyKey);
         return reply.code(200).send(result);
@@ -204,6 +280,12 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
     authedRoutes.post<{ Body: DeveloperAgreementRequest }>(
       '/api/v1/developer/agreements',
       async (req, reply) => {
+        const selfVerification = await verifyFastifyAgentRequest(req);
+        const limitCheck = assertSelfAgentLimit(selfVerification, req.body?.amount || 0, 'ServiceAgreementCreation');
+        if (!limitCheck.allowed) {
+          return reply.code(403).send(limitCheck.errorResponse);
+        }
+
         // PSA Creation Guard: developer API and MCP agent creation is subject to
         // the same creation_enabled flag as the web and MiniPay surfaces.
         const controls = await getAgreementControls();
