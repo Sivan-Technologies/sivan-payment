@@ -27,6 +27,22 @@ export const UNVERIFIED_TRANSACTION_LIMIT_USD = 50;
 export const VERIFIED_TRANSACTION_LIMIT_USD = 5000;
 export const CANONICAL_SELF_REGISTRY_CELO = process.env.SELF_REGISTRY_ADDRESS || DEFAULT_REGISTRY_ADDRESS || '0xaC3DF9ABf80d0F5c020C06B04Cced27763355944';
 
+let dynamicUnverifiedLimit = UNVERIFIED_TRANSACTION_LIMIT_USD;
+let dynamicVerifiedLimit = VERIFIED_TRANSACTION_LIMIT_USD;
+
+export function getUnverifiedLimit(): number {
+  return dynamicUnverifiedLimit;
+}
+
+export function getVerifiedLimit(): number {
+  return dynamicVerifiedLimit;
+}
+
+export function setAgentLimits(unverified?: number, verified?: number) {
+  if (unverified && unverified > 0) dynamicUnverifiedLimit = unverified;
+  if (verified && verified > 0) dynamicVerifiedLimit = verified;
+}
+
 // Initialize singleton verifier with Celo Mainnet settings
 let verifierInstance: SelfAgentVerifier | null = null;
 
@@ -210,16 +226,19 @@ export function assertSelfAgentLimit(
   amountUsd: number,
   operationName: string
 ): { allowed: boolean; errorResponse?: Record<string, any> } {
+  const verifiedLimit = getVerifiedLimit();
+  const unverifiedLimit = getUnverifiedLimit();
+
   if (verification.isVerified) {
-    if (amountUsd > VERIFIED_TRANSACTION_LIMIT_USD) {
+    if (amountUsd > verifiedLimit) {
       return {
         allowed: false,
         errorResponse: {
           success: false,
           code: 'VERIFIED_AGENT_LIMIT_EXCEEDED',
-          error: `Amount ($${amountUsd} USD) exceeds verified agent maximum tier limit ($${VERIFIED_TRANSACTION_LIMIT_USD} USD).`,
+          error: `Amount ($${amountUsd} USD) exceeds verified agent maximum tier limit ($${verifiedLimit} USD).`,
           tier: verification.tier,
-          maxAllowedUsd: VERIFIED_TRANSACTION_LIMIT_USD,
+          maxAllowedUsd: verifiedLimit,
         },
       };
     }
@@ -227,17 +246,17 @@ export function assertSelfAgentLimit(
   }
 
   // Unverified Agent check
-  if (amountUsd > UNVERIFIED_TRANSACTION_LIMIT_USD) {
+  if (amountUsd > unverifiedLimit) {
     return {
       allowed: false,
       errorResponse: {
         success: false,
         code: 'SELF_AGENT_ID_REQUIRED',
-        error: `Action '${operationName}' of $${amountUsd} USD exceeds unverified agent limit ($${UNVERIFIED_TRANSACTION_LIMIT_USD} USD).`,
+        error: `Action '${operationName}' of $${amountUsd} USD exceeds unverified agent limit ($${unverifiedLimit} USD).`,
         message: 'Only verified human-backed agents with Self Agent ID may initiate high-value transfers, Service Agreements, or fiat off-ramps.',
         tier: verification.tier,
-        unverifiedLimitUsd: UNVERIFIED_TRANSACTION_LIMIT_USD,
-        verifiedLimitUsd: VERIFIED_TRANSACTION_LIMIT_USD,
+        unverifiedLimitUsd: unverifiedLimit,
+        verifiedLimitUsd: verifiedLimit,
         reauthUrl: verification.reauthUrl,
         registryUrl: verification.registryUrl,
       },
