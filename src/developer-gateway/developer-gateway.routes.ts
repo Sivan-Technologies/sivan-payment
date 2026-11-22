@@ -64,7 +64,7 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
       },
       supportedChains: [
         { network: 'stellar', nativeAsset: 'USDC', feeModel: 'ZERO_GAS_SPONSORED (CAP-0015)' },
-        { network: 'celo', nativeAssets: ['cUSD', 'USDC'], feeModel: 'MICRO_GAS' },
+        { network: 'celo', nativeAssets: ['USDC', 'USDT', 'CELO'], feeModel: 'MICRO_GAS' },
         { network: 'solana', nativeAssets: ['USDC', 'USDT'], feeModel: 'SUB_CENT_HIGH_SPEED' },
         { network: 'base', nativeAsset: 'USDC', feeModel: 'L2_HIGH_THROUGHPUT' },
         { network: 'bsc', nativeAssets: ['USDT', 'USDC'], feeModel: 'EVM_LOW_FEE' },
@@ -113,7 +113,7 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
           network: 'eip155:42220',
           payTo: SIVAN_CELO_AGENT_ADDRESS,
           facilitator: X402_FACILITATOR_MAINNET_URL,
-          assets: ['USDC', 'USDT', 'cUSD'],
+          assets: ['USDC', 'USDT', 'CELO'],
         },
         selfAgentId: {
           standard: 'ERC-8004 / Self Protocol Proof-of-Human',

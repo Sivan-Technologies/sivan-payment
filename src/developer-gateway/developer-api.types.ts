@@ -13,7 +13,7 @@ export interface DeveloperTransferRequest {
   userId: string;
   destinationAddress: string;
   network: WalletChain;
-  asset: 'usdc' | 'usdt' | 'cusd';
+  asset: 'usdc' | 'usdt';
   amount: number;
   memo?: string;
 }
@@ -40,7 +40,7 @@ export interface DeveloperAgreementRequest {
   sellerUserId: string;
   sellerAddress?: string;
   network: WalletChain;
-  currency: 'USDC' | 'CUSD';
+  currency: 'USDC' | 'USDT' | 'CELO';
   amount: number;
   inspectionWindowDays?: number;
   /** Optional explicit delivery deadline in days. If omitted, Sivan extracts the

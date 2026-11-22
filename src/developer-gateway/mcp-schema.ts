@@ -14,6 +14,11 @@ export interface McpToolDefinition {
     properties: Record<string, any>;
     required?: string[];
   };
+  annotations?: {
+    readOnlyHint: boolean;
+    destructiveHint: boolean;
+    openWorldHint: boolean;
+  };
 }
 
 export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
@@ -48,6 +53,11 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
         },
       },
       required: ['amount', 'recipientIdentifier'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
     },
   },
   {
@@ -94,6 +104,11 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
       },
       required: ['title', 'amount', 'buyerUserId', 'sellerUserId'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
   },
   {
     name: 'sivan_verify_milestone_and_release',
@@ -117,6 +132,11 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
       },
       required: ['agreementId', 'actorUserId'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
   },
   {
     name: 'sivan_resolve_bank_account',
@@ -135,6 +155,11 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
         },
       },
       required: ['accountNumber', 'bankCode'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -167,6 +192,11 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
       },
       required: ['userId', 'amountUsd', 'bankCode', 'accountNumber', 'accountName'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
   },
   {
     name: 'sivan_get_balance',
@@ -181,6 +211,11 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
         },
       },
       required: ['userId'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
     },
   },
 ];
