@@ -26,11 +26,11 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
       properties: {
         amount: {
           type: 'number',
-          description: 'Payment amount in USDC, cUSD, or USDT (e.g. 15.50).',
+          description: 'Payment amount in USDC, CELO, or USDT (e.g. 15.50).',
         },
         currency: {
           type: 'string',
-          enum: ['USDC', 'cUSD', 'USDT'],
+          enum: ['USDC', 'CELO', 'USDT'],
           description: 'Payment currency symbol. Defaults to USDC.',
         },
         network: {
@@ -71,7 +71,7 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
         },
         currency: {
           type: 'string',
-          enum: ['USDC', 'cUSD', 'USDT'],
+          enum: ['USDC', 'CELO', 'USDT'],
           description: 'Settlement currency.',
         },
         network: {

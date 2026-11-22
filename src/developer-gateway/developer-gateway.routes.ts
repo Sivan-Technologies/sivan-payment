@@ -384,6 +384,166 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
     });
   });
 
+  // ChatGPT AI Plugin Manifest Definition
+  const AI_PLUGIN_MANIFEST = {
+    schema_version: 'v1',
+    name_for_human: 'Sivan Payment Ai',
+    name_for_model: 'sivan_payment_ai',
+    description_for_human:
+      'Autonomous zero-gas payment links, milestone Service Agreements, and Celo/Naira bank settlements.',
+    description_for_model:
+      'Autonomous payment protocol on Celo and multi-chain. Enables creating payment links, locking and releasing milestone Service Agreements, resolving Nigerian NUBAN bank accounts, executing instant fiat off-ramps via Textile FX and NIBSS, and checking multi-chain balances.',
+    auth: {
+      type: 'none',
+    },
+    api: {
+      type: 'openapi',
+      url: 'https://api.sivantech.online/openapi.json',
+    },
+    logo_url: 'https://sivantech.online/logo.png',
+    contact_email: 'support@sivantech.online',
+    legal_info_url: 'https://sivantech.online',
+  };
+
+  function generateOpenApiSchema() {
+    const paths: Record<string, any> = {};
+
+    for (const tool of SIVAN_MCP_TOOLS) {
+      paths[`/api/v1/tools/${tool.name}`] = {
+        post: {
+          summary: tool.description,
+          operationId: tool.name,
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: tool.inputSchema,
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Successful tool execution',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      status: { type: 'string', example: 'success' },
+                      tool: { type: 'string', example: tool.name },
+                      result: { type: 'object' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Validation or execution error',
+            },
+          },
+        },
+      };
+    }
+
+    paths['/api/v1/agent/invoke'] = {
+      post: {
+        summary: 'General Sivan Agent Tool Invocation',
+        operationId: 'invokeSivanAgent',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  tool: {
+                    type: 'string',
+                    description: 'Name of the certified tool to execute',
+                    enum: SIVAN_MCP_TOOLS.map((t) => t.name),
+                  },
+                  parameters: {
+                    type: 'object',
+                    description: 'Arguments for the specified tool',
+                  },
+                },
+                required: ['tool'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Invocation response from Sivan Agent #10089',
+          },
+        },
+      },
+    };
+
+    return {
+      openapi: '3.1.0',
+      info: {
+        title: 'Sivan Payment Ai Autonomous Protocol',
+        description:
+          'Certified autonomous payment, milestone Service Agreement, and Celo/Naira bank settlement API for AI agents and LLMs.',
+        version: '1.0.0',
+        contact: {
+          name: 'Sivan Technology Support',
+          email: 'support@sivantech.online',
+          url: 'https://sivantech.online',
+        },
+      },
+      servers: [
+        {
+          url: 'https://api.sivantech.online',
+          description: 'Official Sivan Production Gateway',
+        },
+      ],
+      paths,
+    };
+  }
+
+  // ChatGPT AI Plugin Manifest endpoints
+  const pluginManifestHandler = async (_req: any, reply: any) => {
+    reply.header('Content-Type', 'application/json');
+    reply.header('Access-Control-Allow-Origin', '*');
+    return reply.code(200).send(AI_PLUGIN_MANIFEST);
+  };
+  app.get('/.well-known/ai-plugin.json', pluginManifestHandler);
+  app.get('/api/v1/ai-plugin.json', pluginManifestHandler);
+
+  // OpenAPI 3.1.0 Specification endpoints (ChatGPT Actions & Gemini Extensions)
+  const openApiHandler = async (_req: any, reply: any) => {
+    reply.header('Content-Type', 'application/json');
+    reply.header('Access-Control-Allow-Origin', '*');
+    return reply.code(200).send(generateOpenApiSchema());
+  };
+  app.get('/openapi.json', openApiHandler);
+  app.get('/api/v1/openapi.json', openApiHandler);
+
+  // Direct Tool Invocation Route for ChatGPT & Gemini OpenAPI actions
+  app.post<{ Params: { toolName: string }; Body: any }>(
+    '/api/v1/tools/:toolName',
+    async (req, reply) => {
+      const { toolName } = req.params;
+      const toolArgs = req.body || {};
+
+      try {
+        const result = await mcpServerEngine.executeTool(toolName, toolArgs);
+        return reply.code(200).send({
+          status: 'success',
+          tool: toolName,
+          result,
+        });
+      } catch (err: any) {
+        return reply.code(400).send({
+          status: 'error',
+          tool: toolName,
+          error: err.message || 'Execution failed',
+        });
+      }
+    }
+  );
+
   // Authenticated Developer Gateway Routes
   app.register(async (authedRoutes) => {
     authedRoutes.addHook('preHandler', requireDeveloperApiKey);
