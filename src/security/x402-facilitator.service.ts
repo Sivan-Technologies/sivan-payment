@@ -9,15 +9,40 @@ import { FastifyRequest, FastifyReply } from 'fastify';
  * Attribution Tag: celo_bdb587d550be (ERC-8021 calldata suffix)
  */
 
-export const SIVAN_CELO_AGENT_ADDRESS = '0x46eFfe0409BFE99b0435e7bb7219DC6586612345';
-export const SIVAN_CELO_AGENT_ID = 10089;
-export const SIVAN_CELO_ATTRIBUTION_TAG = 'celo_bdb587d550be';
+export const SIVAN_CELO_AGENT_ADDRESS =
+  process.env.SIVAN_CELO_AGENT_ADDRESS ||
+  process.env.CELO_AGENT_PAYOUT_ADDRESS ||
+  process.env.CELO_SETTLEMENT_VAULT ||
+  '0x46eFfe0409BFE99b0435e7bb7219DC6586612345';
+
+export const SIVAN_CELO_AGENT_ID = Number(
+  process.env.CELO_AGENT_ID ||
+  process.env.SIVAN_CELO_AGENT_ID ||
+  10089
+);
+
+export const SIVAN_CELO_ATTRIBUTION_TAG =
+  process.env.CELO_ATTRIBUTION_TAG ||
+  process.env.SIVAN_CELO_ATTRIBUTION_TAG ||
+  'celo_bdb587d550be';
 
 export const CELO_MAINNET_EIP155 = 'eip155:42220';
 export const CELO_SEPOLIA_EIP155 = 'eip155:11142220';
 
-export const X402_FACILITATOR_MAINNET_URL = 'https://api.x402.celo.org';
-export const X402_FACILITATOR_SEPOLIA_URL = 'https://api.x402.sepolia.celo.org';
+export const X402_FACILITATOR_MAINNET_URL =
+  process.env.X402_FACILITATOR_URL || 'https://api.x402.celo.org';
+
+export const X402_FACILITATOR_SEPOLIA_URL =
+  process.env.X402_FACILITATOR_SEPOLIA_URL || 'https://api.x402.sepolia.celo.org';
+
+export function getActiveNetworkEip155(): string {
+  return process.env.CELO_NETWORK === 'sepolia' ? CELO_SEPOLIA_EIP155 : CELO_MAINNET_EIP155;
+}
+
+export function getActiveFacilitatorUrl(): string {
+  if (process.env.X402_FACILITATOR_URL) return process.env.X402_FACILITATOR_URL;
+  return process.env.CELO_NETWORK === 'sepolia' ? X402_FACILITATOR_SEPOLIA_URL : X402_FACILITATOR_MAINNET_URL;
+}
 
 // Canonical token contracts on Celo Mainnet
 export const CELO_ASSETS = {
@@ -90,7 +115,7 @@ export function generateX402Challenge(opts?: {
   const assetAddress = opts?.customAssetAddress || assetConfig.address;
   // Default to 0.005 USDC micro-payment (5000 base units at 6 decimals)
   const amount = opts?.amount || '5000';
-  const network = opts?.network || CELO_MAINNET_EIP155;
+  const network = opts?.network || getActiveNetworkEip155();
 
   const challenge: X402ChallengePayload = {
     x402: {
@@ -180,7 +205,7 @@ export async function settleX402Payment(
   apiKeyOverride?: string
 ): Promise<X402SettlementResult> {
   const apiKey = apiKeyOverride || process.env.X402_API_KEY;
-  const facilitatorUrl = process.env.X402_FACILITATOR_URL || X402_FACILITATOR_MAINNET_URL;
+  const facilitatorUrl = getActiveFacilitatorUrl();
 
   // In local test environments without API key or when mocked, gracefully simulate successful settlement
   if (!apiKey || apiKey === 'mock' || apiKey.startsWith('test_')) {
@@ -253,7 +278,7 @@ export function sendX402RequiredResponse(
     message: 'Payment required to invoke Sivan AI agent #10089 on Celo. Sign the authorization payload and submit with payment-signature header.',
     ...challenge,
     facilitator: {
-      endpoint: X402_FACILITATOR_MAINNET_URL,
+      endpoint: getActiveFacilitatorUrl(),
       docs: 'https://x402.celo.org',
       skillDoc: 'https://x402.celo.org/skill.md',
     },
