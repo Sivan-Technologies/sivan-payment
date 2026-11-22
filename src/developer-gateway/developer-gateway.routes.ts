@@ -19,6 +19,18 @@ import {
   UNVERIFIED_TRANSACTION_LIMIT_USD,
   VERIFIED_TRANSACTION_LIMIT_USD,
 } from '../security/self-agent-verifier.service.js';
+import {
+  isX402Requested,
+  extractX402PaymentPayload,
+  settleX402Payment,
+  sendX402RequiredResponse,
+  generateX402Challenge,
+  X402_FACILITATOR_MAINNET_URL,
+  SIVAN_CELO_AGENT_ADDRESS,
+  SIVAN_CELO_AGENT_ID,
+  SIVAN_CELO_ATTRIBUTION_TAG,
+  CELO_ASSETS,
+} from '../security/x402-facilitator.service.js';
 
 export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // Public developer health check (no auth needed)
@@ -57,6 +69,16 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
       ],
       mcpToolsCount: SIVAN_MCP_TOOLS.length,
       tools: SIVAN_MCP_TOOLS.map((t) => ({ name: t.name, description: t.description })),
+      x402Facilitator: {
+        standard: 'x402 V2 Protocol',
+        network: 'eip155:42220',
+        facilitatorUrl: X402_FACILITATOR_MAINNET_URL,
+        supportedAssets: Object.keys(CELO_ASSETS),
+        agentId: SIVAN_CELO_AGENT_ID,
+        payTo: SIVAN_CELO_AGENT_ADDRESS,
+        attributionTag: SIVAN_CELO_ATTRIBUTION_TAG,
+        challengeEndpoint: 'https://api.sivantech.online/api/v1/agent/x402',
+      },
     };
   };
 
@@ -65,17 +87,31 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
 
   // REST Agent Invocation Endpoint (Registered on 8004scan / ERC-8004)
   const agentInvokeHandler = async (req: any, reply: any) => {
+    // If client or scanner requests x402 challenge via GET
+    if (req.method === 'GET' && isX402Requested(req)) {
+      return sendX402RequiredResponse(reply);
+    }
+
     if (req.method === 'GET') {
       return reply.code(200).send({
         status: 'active',
         agent: {
           name: 'Sivan AI',
-          agentId: 10089,
+          agentId: SIVAN_CELO_AGENT_ID,
           network: 'celo',
           chainId: 42220,
-          walletAddress: '0x46eFfe0409BFE99b0435e7bb7219DC6586612345',
-          attributionTag: 'celo_bdb587d550be',
-          registryUrl: 'https://8004scan.io/agents/celo/10089',
+          walletAddress: SIVAN_CELO_AGENT_ADDRESS,
+          attributionTag: SIVAN_CELO_ATTRIBUTION_TAG,
+          registryUrl: `https://8004scan.io/agents/celo/${SIVAN_CELO_AGENT_ID}`,
+        },
+        x402: {
+          supported: true,
+          version: 2,
+          scheme: 'exact',
+          network: 'eip155:42220',
+          payTo: SIVAN_CELO_AGENT_ADDRESS,
+          facilitator: X402_FACILITATOR_MAINNET_URL,
+          assets: ['USDC', 'USDT', 'cUSD'],
         },
         selfAgentId: {
           standard: 'ERC-8004 / Self Protocol Proof-of-Human',
@@ -99,13 +135,35 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
           prompt: 'Transfer 5 USDC on Celo to 0x...',
           tool: 'sivan_create_payment_link',
           params: {
-            destinationAddress: '0x46eFfe0409BFE99b0435e7bb7219DC6586612345',
+            destinationAddress: SIVAN_CELO_AGENT_ADDRESS,
             amount: 5,
             network: 'celo',
             currency: 'usdc',
           },
         },
       });
+    }
+
+    // Handle x402 Payment Flow for POST requests
+    let x402Settlement: any = null;
+    if (isX402Requested(req)) {
+      const payment = extractX402PaymentPayload(req);
+      if (!payment || (!payment.paymentPayload && !payment.signature)) {
+        // Return 402 Payment Required with base64 payment-required header
+        return sendX402RequiredResponse(reply);
+      }
+
+      // Settle payment with Celo hosted facilitator
+      const settlement = await settleX402Payment(payment.paymentPayload, payment.paymentRequirements);
+      if (!settlement.success) {
+        return reply.code(402).send({
+          status: 'error',
+          code: 402,
+          error: settlement.error || 'x402 payment settlement failed on Celo',
+          challenge: generateX402Challenge().challenge,
+        });
+      }
+      x402Settlement = settlement;
     }
 
     const selfVerification = await verifyFastifyAgentRequest(req);
@@ -131,9 +189,18 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
           status: 'success',
           agent: {
             name: 'Sivan AI',
-            agentId: 10089,
-            attributionTag: 'celo_bdb587d550be',
+            agentId: SIVAN_CELO_AGENT_ID,
+            attributionTag: SIVAN_CELO_ATTRIBUTION_TAG,
           },
+          x402Payment: x402Settlement
+            ? {
+                settled: true,
+                transaction: x402Settlement.transaction || x402Settlement.txHash,
+                asset: x402Settlement.asset,
+                amount: x402Settlement.amount,
+                settledVia: x402Settlement.settledVia,
+              }
+            : undefined,
           selfVerification: {
             isVerified: selfVerification.isVerified,
             tier: selfVerification.tier,
@@ -147,8 +214,8 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
           status: 'error',
           agent: {
             name: 'Sivan AI',
-            agentId: 10089,
-            attributionTag: 'celo_bdb587d550be',
+            agentId: SIVAN_CELO_AGENT_ID,
+            attributionTag: SIVAN_CELO_ATTRIBUTION_TAG,
           },
           selfVerification: {
             isVerified: selfVerification.isVerified,
@@ -165,10 +232,17 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
       status: 'success',
       agent: {
         name: 'Sivan AI',
-        agentId: 10089,
+        agentId: SIVAN_CELO_AGENT_ID,
         network: 'celo',
-        attributionTag: 'celo_bdb587d550be',
+        attributionTag: SIVAN_CELO_ATTRIBUTION_TAG,
       },
+      x402Payment: x402Settlement
+        ? {
+            settled: true,
+            transaction: x402Settlement.transaction || x402Settlement.txHash,
+            settledVia: x402Settlement.settledVia,
+          }
+        : undefined,
       selfVerification: {
         isVerified: selfVerification.isVerified,
         tier: selfVerification.tier,
@@ -182,6 +256,58 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
 
   app.get('/api/v1/agent/invoke', agentInvokeHandler);
   app.post('/api/v1/agent/invoke', agentInvokeHandler);
+
+  // Dedicated Celo x402 Facilitator Challenge & Discovery Endpoint
+  app.get('/api/v1/agent/x402', async (_req, reply) => {
+    return sendX402RequiredResponse(reply);
+  });
+
+  app.post('/api/v1/agent/x402', async (req, reply) => {
+    const payment = extractX402PaymentPayload(req);
+    if (!payment || (!payment.paymentPayload && !payment.signature)) {
+      return sendX402RequiredResponse(reply);
+    }
+    const settlement = await settleX402Payment(payment.paymentPayload, payment.paymentRequirements);
+    if (!settlement.success) {
+      return reply.code(402).send({
+        status: 'error',
+        code: 402,
+        error: settlement.error || 'x402 payment settlement failed on Celo',
+        challenge: generateX402Challenge().challenge,
+      });
+    }
+    return reply.code(200).send({
+      status: 'success',
+      settlement,
+      agentId: SIVAN_CELO_AGENT_ID,
+      attributionTag: SIVAN_CELO_ATTRIBUTION_TAG,
+    });
+  });
+
+  // Direct Settlement Forwarding to Celo Hosted Facilitator
+  app.post<{ Body: { paymentPayload?: any; paymentRequirements?: any; apiKey?: string } }>(
+    '/api/v1/agent/x402/settle',
+    async (req, reply) => {
+      const { paymentPayload, paymentRequirements, apiKey } = req.body || {};
+      if (!paymentPayload) {
+        return reply.code(400).send({
+          status: 'error',
+          error: 'Missing paymentPayload in request body',
+        });
+      }
+      const settlement = await settleX402Payment(paymentPayload, paymentRequirements, apiKey);
+      if (!settlement.success) {
+        return reply.code(402).send({
+          status: 'error',
+          error: settlement.error || 'Settlement rejected',
+        });
+      }
+      return reply.code(200).send({
+        status: 'success',
+        ...settlement,
+      });
+    }
+  );
 
   // Self Agent ID Proof Status Check
   app.get('/api/v1/agent/self-status', async (req: any, reply: any) => {
