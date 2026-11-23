@@ -105,7 +105,7 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
       headers: {
         'Content-Type': 'application/json',
         accountId: accountId,
-        'User-Agent': 'Sivan-Payment-Engine/1.0 (Autonomous Web3 Banking; support@sivantech.online)',
+        'User-Agent': 'Sivan-Payment-Engine/1.0 (Borderless Autonomous Payment Protocol; support@sivantech.online)',
       },
       body: JSON.stringify({
         grant_type: 'client_credentials',
@@ -145,7 +145,7 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
       'Content-Type': 'application/json',
       accountId: this.accountId(),
       Accept: 'application/json',
-      'User-Agent': 'Sivan-Payment-Engine/1.0 (Autonomous Web3 Banking; support@sivantech.online)',
+      'User-Agent': 'Sivan-Payment-Engine/1.0 (Borderless Autonomous Payment Protocol; support@sivantech.online)',
     };
   }
 

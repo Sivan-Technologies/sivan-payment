@@ -120,7 +120,7 @@ export class NombaUtilityProvider implements IUtilityProvider {
       headers: {
         'Content-Type': 'application/json',
         accountId,
-        'User-Agent': 'Sivan-Payment-Engine/1.0 (Autonomous Web3 Banking; support@sivantech.online)',
+        'User-Agent': 'Sivan-Payment-Engine/1.0 (Borderless Autonomous Payment Protocol; support@sivantech.online)',
       },
       body: JSON.stringify({
         grant_type: 'client_credentials',
@@ -159,7 +159,7 @@ export class NombaUtilityProvider implements IUtilityProvider {
       accountId: this.accountId(),
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
-      'User-Agent': 'Sivan-Payment-Engine/1.0 (Autonomous Web3 Banking; support@sivantech.online)',
+      'User-Agent': 'Sivan-Payment-Engine/1.0 (Borderless Autonomous Payment Protocol; support@sivantech.online)',
       ...((options.headers as Record<string, string>) || {}),
     };
 

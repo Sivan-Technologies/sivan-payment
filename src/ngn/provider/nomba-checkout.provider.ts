@@ -81,7 +81,7 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
       headers: {
         'Content-Type': 'application/json',
         accountId: accountId,
-        'User-Agent': 'Sivan-Payment-Engine/1.0 (Autonomous Web3 Banking; support@sivantech.online)',
+        'User-Agent': 'Sivan-Payment-Engine/1.0 (Borderless Autonomous Payment Protocol; support@sivantech.online)',
       },
       body: JSON.stringify({
         grant_type: 'client_credentials',
@@ -152,7 +152,7 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
         accountId: accountId,
-        'User-Agent': 'Sivan-Payment-Engine/1.0 (Autonomous Web3 Banking; support@sivantech.online)',
+        'User-Agent': 'Sivan-Payment-Engine/1.0 (Borderless Autonomous Payment Protocol; support@sivantech.online)',
       },
       body: JSON.stringify(body),
     });
@@ -193,7 +193,7 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
       headers: {
         Authorization: `Bearer ${token}`,
         accountId: accountId,
-        'User-Agent': 'Sivan-Payment-Engine/1.0 (Autonomous Web3 Banking; support@sivantech.online)',
+        'User-Agent': 'Sivan-Payment-Engine/1.0 (Borderless Autonomous Payment Protocol; support@sivantech.online)',
       },
     });
 

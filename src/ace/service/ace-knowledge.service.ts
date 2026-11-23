@@ -140,7 +140,7 @@ const PROTOCOL_KNOWLEDGE_ARTICLES: KnowledgeArticleItem[] = [
     title: 'What is Sivan Ai?',
     category: 'community',
     answer:
-      'Sivan Ai is an autonomous Web3 and fiat settlement workspace built for the global digital workforce, freelancers, and businesses. It combines milestone-backed Service Agreements, multi-chain non-custodial wallets, Global & NGN Virtual Accounts, and near-instant local bank withdrawals in under 1 to 2 minutes.',
+      'Sivan Ai is a Borderless Autonomous Payment Protocol and settlement workspace built for the global digital workforce, freelancers, and businesses. It combines milestone-backed Service Agreements, multi-chain non-custodial wallets, Global & NGN Virtual Accounts, and near-instant local bank withdrawals in under 1 to 2 minutes.',
     tags: ['what is sivan', 'about sivan', 'who is sivan', 'sivan ai', 'sivan technology', 'overview', 'platform'],
     pinned: true,
   },
@@ -336,7 +336,7 @@ export async function querySivanKnowledgeBase(input: {
   // 3. Default helpful overview when the question is open-ended
   return {
     answer:
-      'Sivan Ai is your global Web3 and fiat settlement workspace. I can answer questions about:\n\n• Signing in via Phone QR Scan, WhatsApp, Telegram, or Work Email OTP\n• Milestone-backed Service Agreements and 4-digit PIN fund releases\n• Multi-chain USDC/USDT deposits across Arc, Arbitrum One, Stellar, Celo, Base, and Solana\n• Dedicated NGN & Global Virtual Accounts and near-instant local bank withdrawals (under 1 to 2 minutes)\n\nAsk me about any of these topics and I will guide you step by step.',
+      'Sivan Ai is your Borderless Autonomous Payment Protocol and settlement workspace. I can answer questions about:\n\n• Signing in via Phone QR Scan, WhatsApp, Telegram, or Work Email OTP\n• Milestone-backed Service Agreements and 4-digit PIN fund releases\n• Multi-chain USDC/USDT deposits across Arc, Arbitrum One, Stellar, Celo, Base, and Solana\n• Dedicated NGN & Global Virtual Accounts and near-instant local bank withdrawals (under 1 to 2 minutes)\n\nAsk me about any of these topics and I will guide you step by step.',
     title: 'Sivan Ai Knowledge Overview',
     articleId: 'community.what_is_sivan',
     category: 'community',
