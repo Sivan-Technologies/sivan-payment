@@ -305,7 +305,7 @@ export class DeveloperGatewayService {
       }
     } catch {}
 
-    return 'solana';
+    return 'celo';
   }
 
   /**
@@ -318,7 +318,8 @@ export class DeveloperGatewayService {
       throw badRequest('title, buyerUserId, and amount are required');
     }
 
-    const selectedNetwork = (await this.resolveOptimalNetwork(input.buyerUserId, input.network, input.amount)) as any;
+    const targetNetwork = input.network || 'celo';
+    const selectedNetwork = (await this.resolveOptimalNetwork(input.buyerUserId, targetNetwork, input.amount)) as any;
     const adapter = getChainAdapter(selectedNetwork);
     const depositAddress = await adapter.getDepositAddress(input.buyerUserId);
     const agreementId = `SIV-${Math.floor(100000 + Math.random() * 900000)}-${selectedNetwork.toUpperCase()}`;
@@ -338,7 +339,7 @@ export class DeveloperGatewayService {
       description: input.description || '',
       amountUsdc: input.amount,
       currency: input.currency || 'usdc',
-      network: input.network,
+      network: selectedNetwork,
       reminder6hSent: false,
       overdueNoticeSent: false,
       fundedAt: null,
@@ -355,7 +356,7 @@ export class DeveloperGatewayService {
       agreementId,
       status: 'PENDING_PAYMENT',
       amount: input.amount,
-      network: input.network,
+      network: selectedNetwork,
       currency: input.currency || 'USDC',
       paymentInstruction: {
         depositAddress,

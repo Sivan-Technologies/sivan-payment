@@ -269,7 +269,7 @@ export class McpServerEngine {
           releasingActor: args.actorUserId || args.actor || 'usr_reviewer_01',
           releaseNote: args.releaseNote || args.releaseNotes || 'Milestone deliverables verified and approved.',
           payoutStatus: 'RELEASE_CONFIRMED',
-          settlementRail: 'Celo/Stellar Smart Account',
+          settlementRail: 'Celo Mainnet (Smart Account)',
           message: `Milestone for agreement ${agreementId} verified. Funds released to seller payout account.`,
         };
       }
