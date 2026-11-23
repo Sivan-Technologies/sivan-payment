@@ -57,6 +57,7 @@ export interface DeveloperAgreementResponse {
   amount: number;
   network: WalletChain;
   currency: string;
+  depositAddress?: string;
   paymentInstruction: {
     depositAddress: string;
     memo?: string;

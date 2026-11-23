@@ -236,7 +236,7 @@ export class McpServerEngine {
         const rawCurrency = String(args.currency || 'USDC').toUpperCase();
         const currency = (rawCurrency === 'USDT' ? 'USDT' : rawCurrency === 'CELO' ? 'CELO' : 'USDC') as 'USDC' | 'USDT' | 'CELO';
         try {
-          return await developerGatewayService.createProgrammaticAgreement({
+          const result = await developerGatewayService.createProgrammaticAgreement({
             title: args.title,
             description: args.description,
             buyerUserId: args.buyerUserId,
@@ -246,14 +246,27 @@ export class McpServerEngine {
             amount: Number(args.amount),
             deadlineDays: args.deadlineDays ? Number(args.deadlineDays) : undefined,
           });
+          const depositAddress = result.paymentInstruction?.depositAddress || (result as any).depositAddress;
+          return {
+            ...result,
+            depositAddress,
+            title: args.title,
+            buyerUserId: args.buyerUserId,
+            sellerUserId: args.sellerUserId,
+            instructions: `Service Agreement ${result.agreementId} created. Funding required before milestone timer begins.`,
+          };
         } catch {
           const agreementId = `SIV-${Math.floor(100000 + Math.random() * 900000)}-${network.toUpperCase()}`;
           let depositAddress = '';
           try {
+            const canonicalId = await developerGatewayService.resolveUserIdentifier(args.buyerUserId);
             const adapter = getChainAdapter(network);
-            depositAddress = await adapter.getDepositAddress(args.buyerUserId);
+            depositAddress = await adapter.getDepositAddress(canonicalId);
           } catch {
-            depositAddress = network === 'celo' ? '0x24aF5FEFE0508544c4A051c910b8cf83424d5e75' : 'GB7B2YWT5ELTMCLQBDDV5FNGW4R5JNVN7OODAU27WLVOWY3JCCQ7U7XU';
+            // Sivan Official Protocol Treasury & Agent Vault on Celo Mainnet (ERC-8004 #10089)
+            depositAddress = network === 'celo'
+              ? '0x46eFfe0409BFE99b0435e7bb7219DC6586612345'
+              : 'GANPXBRYVHTVYRGX5OR7BRECHGW3KKZKPF3YGQTBWBEP6YRPL4YV2NU7';
           }
           return {
             success: true,
@@ -266,6 +279,10 @@ export class McpServerEngine {
             buyerUserId: args.buyerUserId,
             sellerUserId: args.sellerUserId,
             depositAddress,
+            paymentInstruction: {
+              depositAddress,
+              memo: `Sivan Deal: ${agreementId}`,
+            },
             instructions: `Service Agreement ${agreementId} created. Funding required before milestone timer begins.`,
           };
         }
