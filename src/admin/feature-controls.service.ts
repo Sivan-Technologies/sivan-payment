@@ -28,6 +28,7 @@ export interface UtilitiesControls {
   dataEnabled: boolean;
   electricityEnabled: boolean;
   cableTvEnabled: boolean;
+  bettingEnabled?: boolean;
   primaryProvider: 'paystack' | 'smeapi' | string;
   fallbackProvider: 'paystack' | 'smeapi' | 'none' | string;
   maintenanceMode: boolean;
@@ -90,7 +91,8 @@ let utilitiesControls: UtilitiesControls = {
   airtimeEnabled: true,
   dataEnabled: true,
   electricityEnabled: true,
-  cableTvEnabled: false,
+  cableTvEnabled: true,
+  bettingEnabled: true,
   primaryProvider: 'paystack',
   fallbackProvider: 'smeapi',
   maintenanceMode: false,
@@ -178,6 +180,7 @@ export async function getUtilitiesControls(): Promise<UtilitiesControls> {
       dataEnabled: false,
       electricityEnabled: false,
       cableTvEnabled: false,
+      bettingEnabled: false,
       maintenanceMode: true,
       maintenanceReason: 'Database temporarily unavailable. Purchases suspended.',
     };
@@ -231,6 +234,7 @@ export async function getPublicFeatureStatus() {
       dataEnabled: utilitiesControls.enabled && utilitiesControls.dataEnabled && !utilitiesControls.maintenanceMode,
       electricityEnabled: utilitiesControls.enabled && utilitiesControls.electricityEnabled && !utilitiesControls.maintenanceMode,
       cableTvEnabled: utilitiesControls.enabled && utilitiesControls.cableTvEnabled && !utilitiesControls.maintenanceMode,
+      bettingEnabled: utilitiesControls.enabled && (utilitiesControls.bettingEnabled ?? true) && !utilitiesControls.maintenanceMode,
       maintenanceMode: utilitiesControls.maintenanceMode,
       maintenanceReason: utilitiesControls.maintenanceReason,
       discountPercent: utilitiesControls.discountPercent,

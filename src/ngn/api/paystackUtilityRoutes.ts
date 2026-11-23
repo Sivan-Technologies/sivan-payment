@@ -271,10 +271,22 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
         enabled: Boolean(u.electricityEnabled),
       },
       {
+        id: 'CABLE_TV',
+        title: 'Cable TV Subscription',
+        description: 'Renew DStv, GOtv, and StarTimes with zero fees',
+        enabled: Boolean(u.cableTvEnabled),
+      },
+      {
         id: 'CABLE',
         title: 'Cable TV Subscription',
         description: 'Renew DStv, GOtv, and StarTimes with zero fees',
         enabled: Boolean(u.cableTvEnabled),
+      },
+      {
+        id: 'BETTING',
+        title: 'Fund Betting Wallet',
+        description: 'Instant top-up for Bet9ja, SportyBet, 1xBet, and more',
+        enabled: Boolean((u as any).bettingEnabled ?? true),
       },
       {
         id: 'RECEIPTS',
