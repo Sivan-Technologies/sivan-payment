@@ -21,6 +21,7 @@ const DEFAULT_CONTROLS: AgreementControlsRecord = {
   allowedNetworks: ['celo-mainnet', 'stellar-mainnet', 'celo-sepolia', 'stellar-testnet'],
   maintenanceMessage:
     'Service Agreement creation is currently reserved for verified pilot partners during mainnet staging. Active agreements continue to settle normally.',
+  defaultNetwork: 'celo',
   updatedAt: nowIso(),
 };
 
@@ -142,6 +143,7 @@ export function buildPublicControlsPayload(controls: AgreementControlsRecord) {
     emergencyHalt: controls.emergencyHalt,
     pilotWhitelistOnly: controls.pilotWhitelistOnly,
     allowedNetworks: controls.allowedNetworks,
+    defaultNetwork: controls.defaultNetwork || 'celo',
     message: controls.maintenanceMessage,
     updatedAt: controls.updatedAt,
   };

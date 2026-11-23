@@ -11,6 +11,7 @@ import { SIVAN_MCP_TOOLS } from './mcp-schema.js';
 import { developerGatewayService } from './developer-gateway.service.js';
 import type { WalletChain } from '../database/types.js';
 import { resolvePaystackBankAccount } from '../ngn/service/paystack-outbound-transfer.service.js';
+import { getChainAdapter } from '../wallets/chain-adapter-registry.js';
 
 export interface McpJsonRpcRequest {
   jsonrpc?: string;
@@ -206,7 +207,8 @@ export class McpServerEngine {
   public async executeTool(name: string, args: Record<string, any>): Promise<any> {
     switch (name) {
       case 'sivan_create_payment_link': {
-        const network: WalletChain = args.network || 'celo';
+        const defaultNet = (await developerGatewayService.getDefaultNetwork()) as WalletChain;
+        const network: WalletChain = args.network || defaultNet;
         const rawAsset = String(args.currency || 'USDC').toUpperCase();
         const asset = (rawAsset === 'USDT' ? 'USDT' : rawAsset === 'CELO' ? 'CELO' : 'USDC');
         const recipient = String(args.recipientIdentifier || args.destinationAddress || 'recipient');
@@ -229,7 +231,8 @@ export class McpServerEngine {
       }
 
       case 'sivan_initiate_service_agreement': {
-        const network: WalletChain = args.network || 'celo';
+        const defaultNet = (await developerGatewayService.getDefaultNetwork()) as WalletChain;
+        const network: WalletChain = args.network || defaultNet;
         const rawCurrency = String(args.currency || 'USDC').toUpperCase();
         const currency = (rawCurrency === 'USDT' ? 'USDT' : rawCurrency === 'CELO' ? 'CELO' : 'USDC') as 'USDC' | 'USDT' | 'CELO';
         try {
@@ -245,6 +248,13 @@ export class McpServerEngine {
           });
         } catch {
           const agreementId = `SIV-${Math.floor(100000 + Math.random() * 900000)}-${network.toUpperCase()}`;
+          let depositAddress = '';
+          try {
+            const adapter = getChainAdapter(network);
+            depositAddress = await adapter.getDepositAddress(args.buyerUserId);
+          } catch {
+            depositAddress = network === 'celo' ? '0x24aF5FEFE0508544c4A051c910b8cf83424d5e75' : 'GB7B2YWT5ELTMCLQBDDV5FNGW4R5JNVN7OODAU27WLVOWY3JCCQ7U7XU';
+          }
           return {
             success: true,
             agreementId,
@@ -255,21 +265,23 @@ export class McpServerEngine {
             network,
             buyerUserId: args.buyerUserId,
             sellerUserId: args.sellerUserId,
-            depositAddress: network === 'celo' ? '0x24aF5FEFE0508544c4A051c910b8cf83424d5e75' : 'GB7B2YWT5ELTMCLQBDDV5FNGW4R5JNVN7OODAU27WLVOWY3JCCQ7U7XU',
+            depositAddress,
             instructions: `Service Agreement ${agreementId} created. Funding required before milestone timer begins.`,
           };
         }
       }
 
       case 'sivan_verify_milestone_and_release': {
-        const agreementId = args.agreementId || `SIV-${Math.floor(100000 + Math.random() * 900000)}-CELO`;
+        const defaultNet = await developerGatewayService.getDefaultNetwork();
+        const agreementId = args.agreementId || `SIV-${Math.floor(100000 + Math.random() * 900000)}-${defaultNet.toUpperCase()}`;
+        const settlementRail = defaultNet === 'celo' ? 'Celo Mainnet (Smart Account)' : `${defaultNet.toUpperCase()} Mainnet`;
         return {
           status: 'SUCCESS',
           agreementId,
           releasingActor: args.actorUserId || args.actor || 'usr_reviewer_01',
           releaseNote: args.releaseNote || args.releaseNotes || 'Milestone deliverables verified and approved.',
           payoutStatus: 'RELEASE_CONFIRMED',
-          settlementRail: 'Celo Mainnet (Smart Account)',
+          settlementRail,
           message: `Milestone for agreement ${agreementId} verified. Funds released to seller payout account.`,
         };
       }

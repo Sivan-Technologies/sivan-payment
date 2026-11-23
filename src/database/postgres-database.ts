@@ -3294,8 +3294,8 @@ export class PostgresDatabase {
       await ensureAgreementControlsSchema(client);
       await client.query(
         `INSERT INTO payments_agreement_controls
-           (id, creation_enabled, servicing_enabled, emergency_halt, pilot_whitelist_only, allowed_networks, maintenance_message, updated_by_admin_id, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
+           (id, creation_enabled, servicing_enabled, emergency_halt, pilot_whitelist_only, allowed_networks, maintenance_message, default_network, updated_by_admin_id, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10)
          ON CONFLICT (id) DO UPDATE SET
            creation_enabled     = EXCLUDED.creation_enabled,
            servicing_enabled    = EXCLUDED.servicing_enabled,
@@ -3303,6 +3303,7 @@ export class PostgresDatabase {
            pilot_whitelist_only = EXCLUDED.pilot_whitelist_only,
            allowed_networks     = EXCLUDED.allowed_networks,
            maintenance_message  = EXCLUDED.maintenance_message,
+           default_network      = EXCLUDED.default_network,
            updated_by_admin_id  = EXCLUDED.updated_by_admin_id,
            updated_at           = EXCLUDED.updated_at`,
         [
@@ -3313,6 +3314,7 @@ export class PostgresDatabase {
           record.pilotWhitelistOnly,
           JSON.stringify(record.allowedNetworks),
           record.maintenanceMessage,
+          record.defaultNetwork ?? 'celo',
           record.updatedByAdminId ?? null,
           record.updatedAt,
         ]
@@ -3453,9 +3455,11 @@ async function ensureAgreementControlsSchema(client: pg.PoolClient) {
         pilot_whitelist_only BOOLEAN NOT NULL DEFAULT false,
         allowed_networks JSONB NOT NULL DEFAULT '[]',
         maintenance_message TEXT NOT NULL DEFAULT 'Service Agreement creation is reserved for verified pilot partners during mainnet staging. Active agreements continue to settle normally.',
+        default_network TEXT DEFAULT 'celo',
         updated_by_admin_id TEXT,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE payments_agreement_controls ADD COLUMN IF NOT EXISTS default_network TEXT DEFAULT 'celo';
     `);
     agreementControlsSchemaMigrated = true;
   } catch (err) {
@@ -3496,6 +3500,7 @@ function mapAgreementControls(row: any): AgreementControlsRecord {
     pilotWhitelistOnly: Boolean(row.pilot_whitelist_only),
     allowedNetworks: Array.isArray(row.allowed_networks) ? row.allowed_networks : JSON.parse(row.allowed_networks ?? '[]'),
     maintenanceMessage: row.maintenance_message ?? '',
+    defaultNetwork: row.default_network ?? 'celo',
     updatedByAdminId: row.updated_by_admin_id ?? undefined,
     updatedAt: new Date(row.updated_at).toISOString(),
   };

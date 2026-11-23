@@ -62,6 +62,7 @@ export async function agreementControlsRoutes(app: FastifyInstance) {
    *   emergencyHalt?: boolean;
    *   pilotWhitelistOnly?: boolean;
    *   allowedNetworks?: string[];
+   *   defaultNetwork?: string;
    *   maintenanceMessage?: string;
    * }
    */
@@ -72,6 +73,7 @@ export async function agreementControlsRoutes(app: FastifyInstance) {
       emergencyHalt?: boolean;
       pilotWhitelistOnly?: boolean;
       allowedNetworks?: string[];
+      defaultNetwork?: string;
       maintenanceMessage?: string;
     };
   }>('/api/admin/agreements/controls', async (req, reply) => {
@@ -87,6 +89,7 @@ export async function agreementControlsRoutes(app: FastifyInstance) {
     if (typeof body.emergencyHalt === 'boolean') updates.emergencyHalt = body.emergencyHalt;
     if (typeof body.pilotWhitelistOnly === 'boolean') updates.pilotWhitelistOnly = body.pilotWhitelistOnly;
     if (Array.isArray(body.allowedNetworks)) updates.allowedNetworks = body.allowedNetworks;
+    if (typeof body.defaultNetwork === 'string') updates.defaultNetwork = body.defaultNetwork.trim().toLowerCase();
     if (typeof body.maintenanceMessage === 'string') updates.maintenanceMessage = body.maintenanceMessage;
 
     if (Object.keys(updates).length === 0) {

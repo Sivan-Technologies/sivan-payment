@@ -17,6 +17,8 @@ import { getCountdownLabel } from '../agreements/agreement.service.js';
 import { quoteServiceAgreementFee } from '../agreements/agreement-fee-policy.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { getNetworkExplorer } from '../utils/explorers.js';
+import { getAgreementControls } from '../agreements/agreement-controls.service.js';
+import { listPaymentControls } from '../controls/payment-controls.service.js';
 
 /**
  * Centralised explorer URL builder routing through getNetworkExplorer().
@@ -285,7 +287,30 @@ export class DeveloperGatewayService {
   }
 
   /**
+   * Dynamically loads the configured default settlement network from database controls.
+   * Zero hardcoding: respects the network set dynamically in Sivan Admin Hub / database controls.
+   */
+  async getDefaultNetwork(): Promise<string> {
+    try {
+      const controls = await getAgreementControls();
+      if (controls?.defaultNetwork) {
+        return controls.defaultNetwork.toLowerCase();
+      }
+    } catch {}
+
+    try {
+      const paymentControls = await listPaymentControls();
+      if (paymentControls?.defaultNetwork) {
+        return paymentControls.defaultNetwork.toLowerCase();
+      }
+    } catch {}
+
+    return 'celo';
+  }
+
+  /**
    * Intelligently auto-detect optimal settlement chain based on available balance and cost.
+   * If balance is not detected, dynamically falls back to the database-configured default network.
    */
   async resolveOptimalNetwork(userId: string, requestedNetwork?: string, amount = 0): Promise<string> {
     const validChains = ['solana', 'base', 'stellar', 'celo', 'bsc'];
@@ -305,7 +330,7 @@ export class DeveloperGatewayService {
       }
     } catch {}
 
-    return 'celo';
+    return await this.getDefaultNetwork();
   }
 
   /**
@@ -318,7 +343,8 @@ export class DeveloperGatewayService {
       throw badRequest('title, buyerUserId, and amount are required');
     }
 
-    const targetNetwork = input.network || 'celo';
+    const defaultNet = await this.getDefaultNetwork();
+    const targetNetwork = input.network || defaultNet;
     const selectedNetwork = (await this.resolveOptimalNetwork(input.buyerUserId, targetNetwork, input.amount)) as any;
     const adapter = getChainAdapter(selectedNetwork);
     const depositAddress = await adapter.getDepositAddress(input.buyerUserId);

@@ -1395,6 +1395,7 @@ export interface AgreementControlsRecord {
   pilotWhitelistOnly: boolean;
   allowedNetworks: string[];
   maintenanceMessage: string;
+  defaultNetwork?: string;
   updatedByAdminId?: string;
   updatedAt: string;
 }
