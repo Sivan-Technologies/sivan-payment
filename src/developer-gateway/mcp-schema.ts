@@ -107,7 +107,7 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
-      openWorldHint: false,
+      openWorldHint: true,
     },
   },
   {
@@ -159,7 +159,7 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: false,
+      openWorldHint: true,
     },
   },
   {
@@ -215,7 +215,7 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: false,
+      openWorldHint: true,
     },
   },
 ];
