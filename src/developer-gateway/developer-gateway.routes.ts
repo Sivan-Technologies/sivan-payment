@@ -511,6 +511,14 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
   app.get('/.well-known/ai-plugin.json', pluginManifestHandler);
   app.get('/api/v1/ai-plugin.json', pluginManifestHandler);
 
+  // OpenAI Apps Domain Verification Challenge
+  app.get('/.well-known/openai-apps-challenge', async (_req: any, reply: any) => {
+    const token = process.env.OPENAI_APPS_CHALLENGE_TOKEN || 'sivan-openai-apps-verification-token';
+    reply.header('Content-Type', 'text/plain');
+    reply.header('Access-Control-Allow-Origin', '*');
+    return reply.code(200).send(token);
+  });
+
   // OpenAPI 3.1.0 Specification endpoints (ChatGPT Actions & Gemini Extensions)
   const openApiHandler = async (_req: any, reply: any) => {
     reply.header('Content-Type', 'application/json');
