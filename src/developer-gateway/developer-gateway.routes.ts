@@ -513,7 +513,7 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
 
   // OpenAI Apps Domain Verification Challenge
   app.get('/.well-known/openai-apps-challenge', async (_req: any, reply: any) => {
-    const token = process.env.OPENAI_APPS_CHALLENGE_TOKEN || 'sivan-openai-apps-verification-token';
+    const token = process.env.OPENAI_APPS_CHALLENGE_TOKEN || 'qk_VI4ekF1QSeGMtaWVg-6u650DVODbE_lK4HisxLwQ';
     reply.header('Content-Type', 'text/plain');
     reply.header('Access-Control-Allow-Origin', '*');
     return reply.code(200).send(token);
