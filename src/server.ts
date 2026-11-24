@@ -1,3 +1,12 @@
+import dns from 'node:dns';
+
+// Ensure outbound network calls prefer IPv4 so Cloudflare/Nomba recognize our whitelisted static IP (13.39.31.121)
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // Ignore on older Node runtimes
+}
+
 import { buildApp } from './app.js';
 import { env } from './config/env.js';
 import { captureError, flushMonitoring, initMonitoring } from './monitoring/sentry.js';
