@@ -39,6 +39,7 @@ import type {
 import { UTILITY_SERVICE_TYPES } from './utility-provider.interface.js';
 import { PaystackUtilityProvider } from './paystack-utility.provider.js';
 import { NombaUtilityProvider } from './nomba-utility.provider.js';
+import { NinePsbUtilityProvider } from './ninepsb-utility.provider.js';
 import { VtuAggregatorProvider } from './vtu-aggregator.provider.js';
 import { SmeApiUtilityProvider } from './smeapi-utility.provider.js';
 import { MockUtilityProvider } from './mock-utility.provider.js';
@@ -59,6 +60,7 @@ import {
 const registry = new Map<string, IUtilityProvider>();
 
 registry.set('nomba', new NombaUtilityProvider());
+registry.set('9psb', new NinePsbUtilityProvider());
 registry.set('paystack', new PaystackUtilityProvider());
 registry.set('smeapi', new SmeApiUtilityProvider());
 

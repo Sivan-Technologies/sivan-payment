@@ -15,6 +15,13 @@
  *   Production: https://api.9psbng.com
  */
 
+import dns from 'node:dns';
+
+// Ensure outbound calls strictly prefer IPv4 for whitelisted IP routing
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {}
+
 import crypto from 'node:crypto';
 import type {
   IBankingRailAdapter,
@@ -86,7 +93,15 @@ export class NinePsbBankingRailAdapter implements IBankingRailAdapter {
     if (isProd) {
       return (process.env.NINEPSB_LIVE_BASE_URL || 'https://api.9psbng.com').replace(/\/+$/, '');
     }
-    return (process.env.NINEPSB_BASE_URL || 'https://sandbox.9psbng.com').replace(/\/+$/, '');
+    return (
+      process.env.NINEPSB_BASE_URL ||
+      process.env.NINEPSB_VIRTUAL_ACCOUNT_BASE_URL ||
+      'https://baastest.9psb.com.ng'
+    ).replace(/\/+$/, '');
+  }
+
+  private waasUrl(): string {
+    return (process.env.NINEPSB_WAAS_URL || 'http://102.216.128.75:9090').replace(/\/+$/, '');
   }
 
   private webhookSecret(): string {
@@ -98,7 +113,11 @@ export class NinePsbBankingRailAdapter implements IBankingRailAdapter {
   }
 
   public isConfigured(): boolean {
-    return Boolean(this.clientId() && (this.clientSecret() || this.publicKey()));
+    return Boolean(
+      (this.clientId() && this.clientSecret()) ||
+      (this.username() && this.password()) ||
+      this.publicKey()
+    );
   }
 
   // ── Authentication & Token Management ─────────────────────────────────────
