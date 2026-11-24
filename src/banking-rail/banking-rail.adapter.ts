@@ -24,7 +24,7 @@
 
 // ─── Shared input/output types ────────────────────────────────────────────────
 
-export type BankingRailName = 'paystack' | 'mono' | 'flutterwave' | 'nomba';
+export type BankingRailName = 'paystack' | 'mono' | 'flutterwave' | 'nomba' | '9psb';
 
 export interface CreateCustomerInput {
   userId: string;

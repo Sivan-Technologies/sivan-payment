@@ -283,12 +283,6 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
         enabled: Boolean(u.cableTvEnabled),
       },
       {
-        id: 'CABLE',
-        title: 'Cable TV Subscription',
-        description: 'Renew DStv, GOtv, and StarTimes with zero fees',
-        enabled: Boolean(u.cableTvEnabled),
-      },
-      {
         id: 'RECEIPTS',
         title: 'Utility Receipts',
         description: 'View recent utility tokens and payment records',

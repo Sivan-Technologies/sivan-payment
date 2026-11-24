@@ -18,6 +18,7 @@ import type { IBankingRailAdapter, BankingRailName } from './banking-rail.adapte
 import { PaystackBankingRailAdapter } from './adapters/paystack.adapter.js';
 import { MonoBankingRailAdapter } from './adapters/mono.adapter.js';
 import { NombaBankingRailAdapter } from './adapters/nomba.adapter.js';
+import { NinePsbBankingRailAdapter } from './adapters/ninepsb.adapter.js';
 
 const _registry = new Map<BankingRailName, IBankingRailAdapter>();
 
@@ -25,24 +26,26 @@ const _registry = new Map<BankingRailName, IBankingRailAdapter>();
 _registry.set('paystack', new PaystackBankingRailAdapter());
 _registry.set('mono', new MonoBankingRailAdapter());
 _registry.set('nomba', new NombaBankingRailAdapter());
+_registry.set('9psb', new NinePsbBankingRailAdapter());
 // Future: _registry.set('flutterwave', new FlutterwaveBankingRailAdapter());
 
 /**
  * Returns the active banking rail adapter.
  * Controlled by BANKING_RAIL_PROVIDER env var, defaults to 'paystack'.
  */
-export function getBankingRailAdapter(name?: BankingRailName): IBankingRailAdapter {
-  const target = (name ?? (process.env.BANKING_RAIL_PROVIDER as BankingRailName) ?? 'paystack').toLowerCase() as BankingRailName;
+export function getBankingRailAdapter(name?: string): IBankingRailAdapter {
+  const normalized = (name ?? (process.env.BANKING_RAIL_PROVIDER || 'nomba')).toLowerCase().trim();
+  const target = (normalized === 'ninepsb' ? '9psb' : normalized) as BankingRailName;
   const adapter = _registry.get(target);
 
   if (adapter) return adapter;
 
-  // Explicit fallback — never silently return wrong provider
-  const fallback = _registry.get('paystack');
+  // Explicit fallback to nomba or 9psb
+  const fallback = _registry.get('nomba') || _registry.get('9psb') || _registry.get('paystack');
   if (fallback) {
     console.warn(
       `[banking-rail-registry] No adapter registered for "${target}". ` +
-        'Falling back to paystack. Set BANKING_RAIL_PROVIDER to a registered adapter name.'
+        `Falling back to ${fallback.name}. Set BANKING_RAIL_PROVIDER to a registered adapter name.`
     );
     return fallback;
   }
