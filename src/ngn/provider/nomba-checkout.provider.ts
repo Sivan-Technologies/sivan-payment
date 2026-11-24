@@ -129,9 +129,27 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
     const allowedMethods = input.allowedPaymentMethods || ['Card', 'Transfer', 'USSD', 'Apple Pay'];
     const email = customerEmail || `${cleanUserId}@users.sivantech.online`;
 
-    const feeSettings = await getAdminFeeSettings().catch(() => undefined);
-    const feeBreakdown = calculateCheckoutFee(amountNgn, feeSettings);
-    const totalPayableNgn = feeBreakdown.totalPayableNgn;
+    let totalPayableNgn = amountNgn;
+    let depositAmountNgn = amountNgn;
+    let sivanFeeNgn = 0;
+    let providerFeeNgn = 0;
+    let totalFeeNgn = 0;
+
+    if (purpose === 'fund_agreement') {
+      // Service Agreements already have their dynamic deal fee calculated by Sivan Agreement Console.
+      // Charge the exact agreement totalWithFee without adding a secondary deposit fee.
+      totalPayableNgn = amountNgn;
+      depositAmountNgn = amountNgn;
+    } else {
+      // General balance deposit top-up uses dynamic Instant Checkout tiers
+      const feeSettings = await getAdminFeeSettings().catch(() => undefined);
+      const feeBreakdown = calculateCheckoutFee(amountNgn, feeSettings);
+      totalPayableNgn = feeBreakdown.totalPayableNgn;
+      depositAmountNgn = feeBreakdown.depositAmountNgn;
+      sivanFeeNgn = feeBreakdown.sivanFeeNgn;
+      providerFeeNgn = feeBreakdown.providerFeeNgn;
+      totalFeeNgn = feeBreakdown.totalFeeNgn;
+    }
 
     const body: Record<string, any> = {
       order: {
@@ -145,11 +163,11 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
         orderMetaData: {
           purpose,
           userId,
-          depositAmountNgn: feeBreakdown.depositAmountNgn,
-          sivanFeeNgn: feeBreakdown.sivanFeeNgn,
-          providerFeeNgn: feeBreakdown.providerFeeNgn,
-          totalFeeNgn: feeBreakdown.totalFeeNgn,
-          totalPayableNgn: feeBreakdown.totalPayableNgn,
+          depositAmountNgn,
+          sivanFeeNgn,
+          providerFeeNgn,
+          totalFeeNgn,
+          totalPayableNgn,
           ...(agreementId ? { agreementId } : {}),
           platform: 'sivan_payment_ai',
         },
@@ -184,11 +202,11 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
       checkoutLink,
       orderReference,
       amountNgn: totalPayableNgn,
-      depositAmountNgn: feeBreakdown.depositAmountNgn,
-      sivanFeeNgn: feeBreakdown.sivanFeeNgn,
-      providerFeeNgn: feeBreakdown.providerFeeNgn,
-      totalFeeNgn: feeBreakdown.totalFeeNgn,
-      totalPayableNgn: feeBreakdown.totalPayableNgn,
+      depositAmountNgn,
+      sivanFeeNgn,
+      providerFeeNgn,
+      totalFeeNgn,
+      totalPayableNgn,
       currency: 'NGN',
       allowedPaymentMethods: allowedMethods,
       purpose,
