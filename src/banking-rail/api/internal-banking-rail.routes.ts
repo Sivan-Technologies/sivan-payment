@@ -244,5 +244,107 @@ export async function internalBankingRailRoutes(app: FastifyInstance) {
   };
   app.post('/api/payment/internal/checkout', handleCheckout);
   app.post('/internal/checkout', handleCheckout);
+
+  /**
+   * Returns live health and configuration status of all banking rail providers.
+   * Service Agreement engine and Admin modules use this for status cards.
+   */
+  const handleProviderStatus = async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!verifyCoreApiAuth(req, reply)) return;
+
+    let activeRailName = 'sivan_payment';
+    try {
+      const adapter = getBankingRailAdapter();
+      activeRailName = adapter.name;
+    } catch {
+      // Fallback if no specific adapter is selected
+    }
+
+    const isPaystackConfigured = Boolean(process.env.PAYSTACK_SECRET_KEY);
+    const isNombaConfigured = Boolean(
+      (process.env.NOMBA_CLIENT_ID || process.env.NOMBA_LIVE_CLIENT_ID) &&
+      (process.env.NOMBA_CLIENT_SECRET || process.env.NOMBA_LIVE_CLIENT_SECRET)
+    );
+    const isNinePsbConfigured = Boolean(
+      process.env.NINEPSB_PUBLIC_KEY || process.env.NINEPSB_PRIVATE_KEY || process.env.NINEPSB_CLIENT_ID
+    );
+    const isBreetConfigured = Boolean(process.env.BREET_API_KEY);
+    const isBridgeConfigured = Boolean(process.env.BRIDGE_API_KEY);
+    const isFlutterwaveConfigured = Boolean(process.env.FLUTTERWAVE_SECRET_KEY);
+    const isMonnifyConfigured = Boolean(process.env.MONNIFY_API_KEY);
+    const isPalmPayConfigured = Boolean(process.env.PALMPAY_APP_ID);
+
+    return reply.code(200).send({
+      success: true,
+      activeRail: activeRailName,
+      providers: [
+        {
+          provider: 'sivan_payment',
+          label: 'Sivan Central Banking Rail',
+          implemented: true,
+          configured: true,
+          methods: ['bank_transfer', 'ussd', 'card'],
+        },
+        {
+          provider: 'paystack',
+          label: 'Paystack (Central)',
+          implemented: true,
+          configured: isPaystackConfigured,
+          methods: ['bank_transfer'],
+        },
+        {
+          provider: 'nomba',
+          label: 'Nomba (Central)',
+          implemented: true,
+          configured: isNombaConfigured,
+          methods: ['bank_transfer'],
+        },
+        {
+          provider: '9psb',
+          label: '9PSB (Central)',
+          implemented: true,
+          configured: isNinePsbConfigured,
+          methods: ['bank_transfer'],
+        },
+        {
+          provider: 'breet',
+          label: 'Breet (Central)',
+          implemented: true,
+          configured: isBreetConfigured,
+          methods: ['crypto_swap'],
+        },
+        {
+          provider: 'bridge',
+          label: 'Bridge (Central)',
+          implemented: true,
+          configured: isBridgeConfigured,
+          methods: ['virtual_account'],
+        },
+        {
+          provider: 'flutterwave',
+          label: 'Flutterwave',
+          implemented: true,
+          configured: isFlutterwaveConfigured,
+          methods: ['bank_transfer'],
+        },
+        {
+          provider: 'monnify',
+          label: 'Monnify',
+          implemented: true,
+          configured: isMonnifyConfigured,
+          methods: ['bank_transfer'],
+        },
+        {
+          provider: 'palmpay',
+          label: 'PalmPay',
+          implemented: true,
+          configured: isPalmPayConfigured,
+          methods: ['bank_transfer'],
+        },
+      ],
+    });
+  };
+  app.get('/api/payment/internal/provider-status', handleProviderStatus);
+  app.get('/internal/provider-status', handleProviderStatus);
 }
 
