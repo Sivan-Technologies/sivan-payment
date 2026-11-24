@@ -165,11 +165,15 @@ export class SivanCheckoutService {
     }
 
     // Atomic ledger credit with stable provider-agnostic transferId
+    const creditAmount = verification.depositAmountNgn && verification.depositAmountNgn > 0
+      ? verification.depositAmountNgn
+      : amountNgn;
+
     await createBalanceLedgerEntry(
       {
         userId: cleanUserId,
         asset: 'ngn',
-        amount: amountNgn.toFixed(2),
+        amount: creditAmount.toFixed(2),
         kind: 'credit_available',
         status: 'available',
         sourceType: 'checkout_inflow',

@@ -26,6 +26,11 @@ export interface CheckoutOrderResult {
   checkoutLink: string;
   orderReference: string;
   amountNgn: number;
+  depositAmountNgn?: number;
+  sivanFeeNgn?: number;
+  providerFeeNgn?: number;
+  totalFeeNgn?: number;
+  totalPayableNgn?: number;
   currency: 'NGN';
   allowedPaymentMethods: string[];
   purpose: 'deposit' | 'fund_agreement';
@@ -37,6 +42,7 @@ export interface CheckoutVerificationResult {
   verified: boolean;
   status: 'SUCCESS' | 'PENDING' | 'FAILED';
   amountNgn: number;
+  depositAmountNgn?: number;
   orderReference: string;
   transactionId?: string;
   customerEmail?: string;

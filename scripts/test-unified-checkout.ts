@@ -84,7 +84,8 @@ async function runEndToEndCheckoutTest() {
     console.log(`Checkout Hosted Link: ${depositOrder.checkoutLink}`);
 
     assert(depositOrder.provider === 'nomba', 'Deposit order provider is nomba');
-    assert(depositOrder.amountNgn === 5000, 'Deposit order amount is 5000 NGN');
+    assert(depositOrder.depositAmountNgn === 5000, 'Deposit order principal is 5000 NGN');
+    assert(depositOrder.totalPayableNgn >= 5000, 'Total payable includes fee');
     assert(Boolean(depositOrder.checkoutLink && depositOrder.checkoutLink.startsWith('http')), 'Valid hosted checkoutLink returned');
     assert(depositOrder.orderReference.startsWith('sivan_dep_'), 'Order reference uses sivan_dep_ prefix');
   } catch (err: any) {
@@ -112,7 +113,8 @@ async function runEndToEndCheckoutTest() {
     console.log(`Checkout Hosted Link: ${agreementOrder.checkoutLink}`);
 
     assert(agreementOrder.provider === 'nomba', 'Agreement order provider is nomba');
-    assert(agreementOrder.amountNgn === 15000, 'Agreement order amount is 15000 NGN');
+    assert(agreementOrder.depositAmountNgn === 15000, 'Agreement order principal is 15000 NGN');
+    assert(agreementOrder.totalPayableNgn >= 15000, 'Agreement order total payable includes fee');
     assert(Boolean(agreementOrder.checkoutLink && agreementOrder.checkoutLink.startsWith('http')), 'Valid hosted checkoutLink returned');
     assert(agreementOrder.orderReference.startsWith('sivan_agr_'), 'Order reference uses sivan_agr_ prefix');
     assert(agreementOrder.agreementId === 'agr_mobile_app_102', 'Agreement ID retained in order metadata');
@@ -164,10 +166,10 @@ async function runEndToEndCheckoutTest() {
   const ledgerEntries = await listUserBalanceLedger(testUserId);
   const foundEntry = ledgerEntries.find(
     (e: any) =>
-      (e.entry?.transferId || e.transferId) === `checkout_dep_${mockSettledRef}`
+      (e.transferId || e.entry?.transferId) === `checkout_dep_${mockSettledRef}`
   );
   assert(Boolean(foundEntry), 'Ledger contains transferId checkout_dep_' + mockSettledRef);
-  assert((foundEntry?.entry?.amount || foundEntry?.amount) === '5000.00', 'Ledger entry amount is 5000.00 NGN');
+  assert((foundEntry?.amount || foundEntry?.entry?.amount) === '5000.00', 'Ledger entry amount is 5000.00 NGN');
 
   // Replay attempt: duplicate webhook or retry claim
   const result2 = await sivanCheckoutService.processCheckoutSuccess(mockVerification);

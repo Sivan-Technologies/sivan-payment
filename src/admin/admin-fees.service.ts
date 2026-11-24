@@ -37,6 +37,20 @@ export const onrampTierSchema = z.object({
   percent: z.coerce.number().min(0).max(100),
 });
 
+export const checkoutFeeTierSchema = z.object({
+  minAmount: z.coerce.number().min(0),
+  maxAmount: z.coerce.number().min(0).nullable(),
+  flatFeeNgn: z.coerce.number().min(0),
+  percentFee: z.coerce.number().min(0).max(100).default(0),
+});
+
+export const DEFAULT_CHECKOUT_FEE_TIERS = [
+  { minAmount: 0, maxAmount: 4999.99, flatFeeNgn: 50, percentFee: 0 },
+  { minAmount: 5000, maxAmount: 9999.99, flatFeeNgn: 100, percentFee: 0 },
+  { minAmount: 10000, maxAmount: 49999.99, flatFeeNgn: 150, percentFee: 0 },
+  { minAmount: 50000, maxAmount: null, flatFeeNgn: 250, percentFee: 0 },
+];
+
 export const feeSettingsSchema = z.object({
   onrampFeePercent: z.coerce.number().min(0).max(100),
   /**
@@ -133,6 +147,14 @@ export const feeSettingsSchema = z.object({
   maintenanceMode: z.boolean().default(false),
   maintenanceReason: z.string().default('NIBSS inter-bank settlement is undergoing scheduled maintenance. Cashouts will resume shortly.'),
   ngnMinimumFeeNgn: z.coerce.number().min(0).max(10_000_000).default(0),
+
+  /**
+   * ───── INSTANT CHECKOUT (NOMBA) CONTROLS ─────
+   * Dynamic gateway fees and tiered Sivan platform fees for Instant Checkout.
+   */
+  checkoutProviderFeePercent: z.coerce.number().min(0).max(100).default(1.4),
+  checkoutProviderFeeCapNgn: z.coerce.number().min(0).max(100_000_000).default(1800),
+  checkoutSivanFeeTiers: z.array(checkoutFeeTierSchema).default(DEFAULT_CHECKOUT_FEE_TIERS),
 
   /**
    * ───── GHS RAIL CONTROLS (Ghana Cedi via MoMo / Bank) ─────
@@ -404,6 +426,9 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     maintenanceMode: false,
     maintenanceReason: 'NIBSS inter-bank settlement is undergoing scheduled maintenance. Cashouts will resume shortly.',
     ngnMinimumFeeNgn: Number(env.SIVAN_NGN_MINIMUM_FEE_NGN || 0),
+    checkoutProviderFeePercent: 1.4,
+    checkoutProviderFeeCapNgn: 1800,
+    checkoutSivanFeeTiers: DEFAULT_CHECKOUT_FEE_TIERS,
     ghsOnrampFeePercent: Number(percent(Number(process.env.SIVAN_GHS_ONRAMP_FEE_PERCENT || 0))),
     ghsOfframpFeePercent: Number(percent(Number(process.env.SIVAN_GHS_OFFRAMP_FEE_PERCENT || 1.0))),
     ghsProviderFeePercent: Number(process.env.BREET_GHS_FEE_PERCENT ?? 0.8),
@@ -586,4 +611,64 @@ export function calculateEthServiceFeeUsd(
     return Math.min(fee, whaleCap);
   }
   return fee;
+}
+
+export interface CheckoutFeeBreakdown {
+  depositAmountNgn: number;
+  sivanFeeNgn: number;
+  providerFeeNgn: number;
+  totalFeeNgn: number;
+  totalPayableNgn: number;
+  creditAmountNgn: number;
+}
+
+export function calculateCheckoutFee(
+  amountNgn: number,
+  settings?: {
+    checkoutProviderFeePercent?: number;
+    checkoutProviderFeeCapNgn?: number;
+    checkoutSivanFeeTiers?: Array<{
+      minAmount: number;
+      maxAmount: number | null;
+      flatFeeNgn: number;
+      percentFee?: number;
+    }>;
+  }
+): CheckoutFeeBreakdown {
+  const cleanAmount = Math.max(0, Number(amountNgn) || 0);
+  const providerPercent = Number(settings?.checkoutProviderFeePercent ?? 1.4);
+  const providerCap = Number(settings?.checkoutProviderFeeCapNgn ?? 1800);
+  const tiers = settings?.checkoutSivanFeeTiers && settings.checkoutSivanFeeTiers.length > 0
+    ? settings.checkoutSivanFeeTiers
+    : DEFAULT_CHECKOUT_FEE_TIERS;
+
+  let matchingTier = tiers.find((t) => {
+    if (cleanAmount < t.minAmount) return false;
+    if (t.maxAmount !== null && cleanAmount > t.maxAmount) return false;
+    return true;
+  });
+
+  if (!matchingTier && tiers.length > 0) {
+    matchingTier = tiers[tiers.length - 1];
+  }
+
+  const flatFee = Number(matchingTier?.flatFeeNgn ?? 100);
+  const percentFee = Number(matchingTier?.percentFee ?? 0);
+  const sivanFeeNgn = Math.round((flatFee + (cleanAmount * percentFee) / 100) * 100) / 100;
+
+  const rawProviderFee = Math.ceil((cleanAmount * (providerPercent / 100)) * 100) / 100;
+  const providerFeeNgn = providerCap > 0 ? Math.min(rawProviderFee, providerCap) : rawProviderFee;
+
+  const totalFeeNgn = Math.round((sivanFeeNgn + providerFeeNgn) * 100) / 100;
+  const totalPayableNgn = Math.round((cleanAmount + totalFeeNgn) * 100) / 100;
+  const creditAmountNgn = cleanAmount;
+
+  return {
+    depositAmountNgn: cleanAmount,
+    sivanFeeNgn,
+    providerFeeNgn,
+    totalFeeNgn,
+    totalPayableNgn,
+    creditAmountNgn,
+  };
 }

@@ -16,6 +16,7 @@ import { parseBody } from '../../shared/validation.js';
 import { badRequest } from '../../shared/errors.js';
 import { sivanCheckoutService } from '../service/sivan-checkout.service.js';
 import { listAvailableCheckoutProviders } from '../provider/checkout-registry.js';
+import { getAdminFeeSettings, calculateCheckoutFee } from '../../admin/admin-fees.service.js';
 
 const initializeCheckoutSchema = z.object({
   userId: z.string().min(1, 'userId is required'),
@@ -83,6 +84,26 @@ export async function nombaCheckoutRoutes(app: FastifyInstance) {
           },
         });
       }
+    }
+  );
+
+  /**
+   * POST /api/ngn/checkout/quote
+   * Returns exact fee breakdown for a deposit amount using live Admin Hub settings.
+   */
+  app.post(
+    '/api/ngn/checkout/quote',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const quoteSchema = z.object({
+        amountNgn: z.coerce.number().positive('amountNgn must be greater than 0'),
+      });
+      const input = parseBody(quoteSchema, request.body);
+      const settings = await getAdminFeeSettings().catch(() => undefined);
+      const quote = calculateCheckoutFee(input.amountNgn, settings);
+      return reply.code(200).send({
+        success: true,
+        data: quote,
+      });
     }
   );
 

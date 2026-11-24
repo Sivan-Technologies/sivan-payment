@@ -12,6 +12,7 @@ import type {
   CheckoutOrderResult,
   CheckoutVerificationResult,
 } from './checkout-provider.interface.js';
+import { getAdminFeeSettings, calculateCheckoutFee } from '../../admin/admin-fees.service.js';
 
 interface NombaTokenCache {
   accessToken: string;
@@ -128,18 +129,27 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
     const allowedMethods = input.allowedPaymentMethods || ['Card', 'Transfer', 'USSD', 'Apple Pay'];
     const email = customerEmail || `${cleanUserId}@users.sivantech.online`;
 
+    const feeSettings = await getAdminFeeSettings().catch(() => undefined);
+    const feeBreakdown = calculateCheckoutFee(amountNgn, feeSettings);
+    const totalPayableNgn = feeBreakdown.totalPayableNgn;
+
     const body: Record<string, any> = {
       order: {
         orderReference,
         customerId: userId,
         customerEmail: email,
-        amount: Number(amountNgn.toFixed(2)),
+        amount: Number(totalPayableNgn.toFixed(2)),
         currency: 'NGN',
         allowedPaymentMethods: allowedMethods,
         callbackUrl: callbackUrl || process.env.NOMBA_CHECKOUT_CALLBACK_URL || 'https://app.sivantech.online/history',
         orderMetaData: {
           purpose,
           userId,
+          depositAmountNgn: feeBreakdown.depositAmountNgn,
+          sivanFeeNgn: feeBreakdown.sivanFeeNgn,
+          providerFeeNgn: feeBreakdown.providerFeeNgn,
+          totalFeeNgn: feeBreakdown.totalFeeNgn,
+          totalPayableNgn: feeBreakdown.totalPayableNgn,
           ...(agreementId ? { agreementId } : {}),
           platform: 'sivan_payment_ai',
         },
@@ -173,7 +183,12 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
       provider: this.name,
       checkoutLink,
       orderReference,
-      amountNgn,
+      amountNgn: totalPayableNgn,
+      depositAmountNgn: feeBreakdown.depositAmountNgn,
+      sivanFeeNgn: feeBreakdown.sivanFeeNgn,
+      providerFeeNgn: feeBreakdown.providerFeeNgn,
+      totalFeeNgn: feeBreakdown.totalFeeNgn,
+      totalPayableNgn: feeBreakdown.totalPayableNgn,
       currency: 'NGN',
       allowedPaymentMethods: allowedMethods,
       purpose,
@@ -219,12 +234,14 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
     const userId = orderMeta?.userId || data?.customerId;
     const agreementId = orderMeta?.agreementId;
     const amountNgn = Number(data?.amount || 0);
+    const depositAmountNgn = Number(orderMeta?.depositAmountNgn || amountNgn);
 
     return {
       provider: this.name,
       verified: isSuccess,
       status: isSuccess ? 'SUCCESS' : (status === 'FAILED' ? 'FAILED' : 'PENDING'),
       amountNgn,
+      depositAmountNgn,
       orderReference,
       transactionId: data?.transactionId || data?.id,
       customerEmail: data?.customerEmail,
