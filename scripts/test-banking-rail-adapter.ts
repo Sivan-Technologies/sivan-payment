@@ -469,6 +469,44 @@ await test('MonoBankingRailAdapter.name is "mono"', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 8 — Aggregator & Smart Routing Banking Rail Adapter
+// ═══════════════════════════════════════════════════════════════════════════════
+
+printSection('8. Aggregator & Smart Routing Banking Rail Adapter');
+
+const { AggregatorBankingRailAdapter } = await import('../src/banking-rail/adapters/aggregator.adapter.js');
+const aggregatorAdapter = new AggregatorBankingRailAdapter();
+
+await test('registry returns aggregator adapter when requested', () => {
+  const adapter = getBankingRailAdapter('aggregator');
+  assert.equal(adapter.name, 'aggregator');
+});
+
+await test('registry aliases hybrid and smart-router to aggregator', () => {
+  const hybrid = getBankingRailAdapter('hybrid');
+  const smart = getBankingRailAdapter('smart-router');
+  assert.equal(hybrid.name, 'aggregator');
+  assert.equal(smart.name, 'aggregator');
+});
+
+for (const method of REQUIRED_METHODS) {
+  await test(`AggregatorBankingRailAdapter implements ${method}()`, () => {
+    assert.equal(typeof (aggregatorAdapter as any)[method], 'function', `${method} is not a function`);
+  });
+}
+
+await test('AggregatorBankingRailAdapter.name is "aggregator"', () => {
+  assert.equal(aggregatorAdapter.name, 'aggregator');
+});
+
+await test('AggregatorBankingRailAdapter reports composite health', async () => {
+  const h = await aggregatorAdapter.health();
+  assert.ok(h.status === 'ok' || h.status === 'degraded');
+  assert.ok(typeof h.latencyMs === 'number');
+  assert.ok(h.detail?.includes('9PSB') && h.detail?.includes('Nomba'));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // RESULTS
 // ═══════════════════════════════════════════════════════════════════════════════
 

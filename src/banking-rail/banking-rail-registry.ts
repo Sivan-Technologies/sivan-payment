@@ -19,29 +19,55 @@ import { PaystackBankingRailAdapter } from './adapters/paystack.adapter.js';
 import { MonoBankingRailAdapter } from './adapters/mono.adapter.js';
 import { NombaBankingRailAdapter } from './adapters/nomba.adapter.js';
 import { NinePsbBankingRailAdapter } from './adapters/ninepsb.adapter.js';
+import { AggregatorBankingRailAdapter } from './adapters/aggregator.adapter.js';
 
 const _registry = new Map<BankingRailName, IBankingRailAdapter>();
 
-// ── Register built-in adapters ────────────────────────────────────────────────
-_registry.set('paystack', new PaystackBankingRailAdapter());
-_registry.set('mono', new MonoBankingRailAdapter());
-_registry.set('nomba', new NombaBankingRailAdapter());
-_registry.set('9psb', new NinePsbBankingRailAdapter());
-// Future: _registry.set('flutterwave', new FlutterwaveBankingRailAdapter());
+function initAdapter(target: BankingRailName): IBankingRailAdapter | undefined {
+  let adapter = _registry.get(target);
+  if (adapter) return adapter;
+
+  switch (target) {
+    case 'paystack':
+      adapter = new PaystackBankingRailAdapter();
+      break;
+    case 'mono':
+      adapter = new MonoBankingRailAdapter();
+      break;
+    case 'nomba':
+      adapter = new NombaBankingRailAdapter();
+      break;
+    case '9psb':
+      adapter = new NinePsbBankingRailAdapter();
+      break;
+    case 'aggregator':
+      adapter = new AggregatorBankingRailAdapter();
+      break;
+  }
+
+  if (adapter) {
+    _registry.set(target, adapter);
+  }
+  return adapter;
+}
 
 /**
  * Returns the active banking rail adapter.
- * Controlled by BANKING_RAIL_PROVIDER env var, defaults to 'paystack'.
+ * Controlled by BANKING_RAIL_PROVIDER env var, defaults to 'aggregator'.
  */
 export function getBankingRailAdapter(name?: string): IBankingRailAdapter {
-  const normalized = (name ?? (process.env.BANKING_RAIL_PROVIDER || 'nomba')).toLowerCase().trim();
-  const target = (normalized === 'ninepsb' ? '9psb' : normalized) as BankingRailName;
-  const adapter = _registry.get(target);
+  const normalized = (name ?? (process.env.BANKING_RAIL_PROVIDER || 'aggregator')).toLowerCase().trim();
+  const target = (
+    normalized === 'ninepsb' ? '9psb' :
+    normalized === 'hybrid' || normalized === 'smart-router' ? 'aggregator' :
+    normalized
+  ) as BankingRailName;
 
+  const adapter = initAdapter(target);
   if (adapter) return adapter;
 
-  // Explicit fallback to nomba or 9psb
-  const fallback = _registry.get('nomba') || _registry.get('9psb') || _registry.get('paystack');
+  // Explicit fallback to aggregator, nomba, 9psb, or paystack
+  const fallback = initAdapter('aggregator') || initAdapter('nomba') || initAdapter('9psb') || initAdapter('paystack');
   if (fallback) {
     console.warn(
       `[banking-rail-registry] No adapter registered for "${target}". ` +
@@ -62,11 +88,13 @@ export function registerBankingRailAdapter(adapter: IBankingRailAdapter): void {
   _registry.set(adapter.name, adapter);
 }
 
+const ALL_RAILS: BankingRailName[] = ['paystack', 'mono', 'nomba', '9psb', 'aggregator'];
+
 /**
  * List all currently registered adapter names.
  */
 export function listRegisteredRails(): BankingRailName[] {
-  return Array.from(_registry.keys());
+  return ALL_RAILS;
 }
 
 /**

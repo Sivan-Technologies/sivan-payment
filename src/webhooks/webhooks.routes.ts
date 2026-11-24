@@ -195,6 +195,51 @@ export async function webhooksRoutes(app: FastifyInstance) {
   app.get('/api/webhooks/9psb', async (_req, reply) => reply.code(200).send({ status: 'ok', service: '9psb-webhook-receiver' }));
   app.get('/webhooks/9psb', async (_req, reply) => reply.code(200).send({ status: 'ok', service: '9psb-webhook-receiver' }));
 
+  const handleAggregatorWebhook = async (request: any, reply: any) => {
+    const rawBody = request.rawBody as Buffer | undefined;
+    const raw = rawBody ?? Buffer.from(JSON.stringify(request.body ?? {}));
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(request.headers)) {
+      if (typeof value === 'string') headers[key.toLowerCase()] = value;
+    }
+
+    const adapter = getBankingRailAdapter('aggregator');
+    if (!adapter.verifyWebhookSignature(raw, headers)) {
+      console.warn('[aggregator-webhook] Rejecting webhook: invalid signature across all rails');
+      return reply.code(400).send({ status: 'error', message: 'Invalid webhook signature' });
+    }
+
+    try {
+      const event = adapter.parseWebhookEvent(raw);
+      if (event.type === 'deposit.received') {
+        const orderRef = event.reference || '';
+        if (orderRef.startsWith('sivan_') || orderRef.startsWith('agr_') || String(event.providerCustomerId || '').startsWith('sivan_')) {
+          const verification = await sivanCheckoutService.verifyCheckoutTransaction(orderRef, 'nomba').catch(() => null);
+          if (verification && verification.verified) {
+            await sivanCheckoutService.processCheckoutSuccess(verification).catch((err) => {
+              console.warn('[aggregator-webhook] Checkout success auto-processing notice:', err.message);
+            });
+          }
+        }
+        return reply.code(200).send({ status: 'success', event: event.type, reference: event.reference });
+      }
+
+      if (event.type === 'transfer.success' || event.type === 'transfer.failed' || event.type === 'transfer.reversed') {
+        return reply.code(200).send({ status: 'success', event: event.type, providerRef: event.providerRef });
+      }
+
+      return reply.code(200).send({ status: 'ignored', originalType: (event as any).originalType });
+    } catch (err: any) {
+      console.error('[aggregator-webhook] Webhook processing error:', err.message);
+      return reply.code(200).send({ status: 'error_handled', message: err.message });
+    }
+  };
+
+  app.post('/api/webhooks/aggregator', handleAggregatorWebhook);
+  app.post('/webhooks/aggregator', handleAggregatorWebhook);
+  app.get('/api/webhooks/aggregator', async (_req, reply) => reply.code(200).send({ status: 'ok', service: 'aggregator-webhook-receiver' }));
+  app.get('/webhooks/aggregator', async (_req, reply) => reply.code(200).send({ status: 'ok', service: 'aggregator-webhook-receiver' }));
+
   app.post('/api/webhooks/moneygram', handleMoneyGramWebhook);
   app.post('/webhooks/moneygram', handleMoneyGramWebhook);
   app.post('/api/webhooks/ramps-sandbox', handleMoneyGramWebhook);
