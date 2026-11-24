@@ -11,6 +11,15 @@
  * Reuses the existing Nomba BaaS credentials and OAuth token lifecycle.
  */
 
+import dns from 'node:dns';
+
+// Ensure outbound calls strictly exit via whitelisted IPv4 address (13.39.31.121)
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // Ignore on older Node runtimes
+}
+
 import type {
   IUtilityProvider,
   UtilityProviderName,

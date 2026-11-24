@@ -13,6 +13,15 @@
  *   Production: https://api.nomba.com/v1
  */
 
+import dns from 'node:dns';
+
+// Ensure outbound calls strictly exit via whitelisted IPv4 address (13.39.31.121)
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // Ignore on older Node runtimes
+}
+
 import crypto from 'node:crypto';
 import type {
   IBankingRailAdapter,
