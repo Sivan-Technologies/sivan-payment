@@ -329,9 +329,27 @@ export class NinePsbBankingRailAdapter implements IBankingRailAdapter {
   // ── Webhook Verification & Normalization ──────────────────────────────────
 
   verifyWebhookSignature(rawBody: Buffer, headers: Record<string, string>): boolean {
+    // 1. Check HTTP Basic Authentication if provided by 9PSB
+    const authHeader = (headers['authorization'] || headers['Authorization'] || '').trim();
+    const webhookUser = (process.env.NINEPSB_WEBHOOK_USER || 'sivan_9psb_waas').trim();
+    const webhookPass = (process.env.NINEPSB_WEBHOOK_PASSWORD || '').trim();
+
+    if (webhookPass && authHeader.toLowerCase().startsWith('basic ')) {
+      const expectedCredentials = Buffer.from(`${webhookUser}:${webhookPass}`).toString('base64');
+      const incomingCredentials = authHeader.slice(6).trim();
+      const incBuf = Buffer.from(incomingCredentials);
+      const expBuf = Buffer.from(expectedCredentials);
+      if (incBuf.length === expBuf.length && crypto.timingSafeEqual(incBuf, expBuf)) {
+        return true;
+      }
+    }
+
+    // 2. Check HMAC signature
     const secret = this.webhookSecret();
     if (!secret) {
-      console.warn('[NinePsbBankingRailAdapter] verifyWebhookSignature: NINEPSB_WEBHOOK_SECRET is not configured.');
+      if (!webhookPass) {
+        console.warn('[NinePsbBankingRailAdapter] verifyWebhookSignature: neither NINEPSB_WEBHOOK_SECRET nor NINEPSB_WEBHOOK_PASSWORD is configured.');
+      }
       return false;
     }
 
