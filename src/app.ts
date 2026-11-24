@@ -41,7 +41,7 @@ function normalizeAdminAliasUrl(rawUrl = '') {
   if (rawUrl.startsWith('/api/payment/admin/') || rawUrl === '/api/payment/admin') {
     return rawUrl.replace(/^\/api\/payment\/admin/, '/api/admin');
   }
-  if (rawUrl.startsWith('/api/payment/')) {
+  if (rawUrl.startsWith('/api/payment/') && !rawUrl.startsWith('/api/payment/internal/')) {
     return rawUrl.replace(/^\/api\/payment/, '');
   }
   if (!rawUrl.startsWith('/api/admin')) {

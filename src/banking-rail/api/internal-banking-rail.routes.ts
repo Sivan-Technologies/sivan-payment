@@ -49,7 +49,7 @@ export async function internalBankingRailRoutes(app: FastifyInstance) {
    * Generates a Dedicated Virtual Account for a Service Agreement or User.
    * Service Agreement engine calls this instead of calling Nomba directly.
    */
-  app.post('/api/payment/internal/virtual-accounts', async (req: FastifyRequest<{ Body: InternalVirtualAccountBody }>, reply: FastifyReply) => {
+  const handleVirtualAccounts = async (req: FastifyRequest<{ Body: InternalVirtualAccountBody }>, reply: FastifyReply) => {
     if (!verifyCoreApiAuth(req, reply)) return;
 
     const body = req.body || {};
@@ -89,13 +89,15 @@ export async function internalBankingRailRoutes(app: FastifyInstance) {
         error: `Virtual account issuance failed: ${err.message}`,
       });
     }
-  });
+  };
+  app.post('/api/payment/internal/virtual-accounts', handleVirtualAccounts);
+  app.post('/internal/virtual-accounts', handleVirtualAccounts);
 
   /**
    * Dispatches an outbound bank transfer.
    * Service Agreement engine calls this to pay out verified agreements.
    */
-  app.post('/api/payment/internal/disbursements', async (req: FastifyRequest<{ Body: InternalDisbursementBody }>, reply: FastifyReply) => {
+  const handleDisbursements = async (req: FastifyRequest<{ Body: InternalDisbursementBody }>, reply: FastifyReply) => {
     if (!verifyCoreApiAuth(req, reply)) return;
 
     const body = req.body;
@@ -137,12 +139,14 @@ export async function internalBankingRailRoutes(app: FastifyInstance) {
         error: `Disbursement dispatch failed: ${err.message}`,
       });
     }
-  });
+  };
+  app.post('/api/payment/internal/disbursements', handleDisbursements);
+  app.post('/internal/disbursements', handleDisbursements);
 
   /**
    * Checks status of an in-flight or completed disbursement.
    */
-  app.get('/api/payment/internal/disbursements/:providerRef', async (req: FastifyRequest<{ Params: { providerRef: string } }>, reply: FastifyReply) => {
+  const handleGetDisbursement = async (req: FastifyRequest<{ Params: { providerRef: string } }>, reply: FastifyReply) => {
     if (!verifyCoreApiAuth(req, reply)) return;
 
     const { providerRef } = req.params;
@@ -172,72 +176,73 @@ export async function internalBankingRailRoutes(app: FastifyInstance) {
         error: `Disbursement status query failed: ${err.message}`,
       });
     }
-  });
+  };
+  app.get('/api/payment/internal/disbursements/:providerRef', handleGetDisbursement);
+  app.get('/internal/disbursements/:providerRef', handleGetDisbursement);
 
   /**
    * Generates a hosted checkout order link (restricted to Transfer and USSD only).
    * Service Agreement engine calls this to generate web checkout links without holding API keys.
    */
-  app.post(
-    '/api/payment/internal/checkout',
-    async (
-      req: FastifyRequest<{
-        Body: {
-          agreementId?: string;
-          orderReference?: string;
-          amountKobo: number;
-          customerEmail: string;
-          callbackUrl?: string;
-          allowedPaymentMethods?: ('Transfer' | 'USSD')[];
-        };
-      }>,
-      reply: FastifyReply
-    ) => {
-      if (!verifyCoreApiAuth(req, reply)) return;
+  const handleCheckout = async (
+    req: FastifyRequest<{
+      Body: {
+        agreementId?: string;
+        orderReference?: string;
+        amountKobo: number;
+        customerEmail: string;
+        callbackUrl?: string;
+        allowedPaymentMethods?: ('Transfer' | 'USSD')[];
+      };
+    }>,
+    reply: FastifyReply
+  ) => {
+    if (!verifyCoreApiAuth(req, reply)) return;
 
-      const body = req.body || {};
-      const orderReference = body.orderReference || (body.agreementId ? `sivan_agr_${body.agreementId}_${Date.now()}` : `sivan_order_${Date.now()}`);
+    const body = req.body || {};
+    const orderReference = body.orderReference || (body.agreementId ? `sivan_agr_${body.agreementId}_${Date.now()}` : `sivan_order_${Date.now()}`);
 
-      if (!body.amountKobo || !body.customerEmail) {
-        return reply.code(400).send({
-          error: 'Missing required checkout fields: amountKobo, customerEmail',
-        });
-      }
-
-      try {
-        const adapter = getBankingRailAdapter();
-        if (!adapter.createCheckoutOrder) {
-          return reply.code(501).send({
-            error: `Active banking rail (${adapter.name}) does not support hosted checkout`,
-          });
-        }
-
-        const result = await adapter.createCheckoutOrder({
-          orderReference,
-          amountKobo: Math.round(Number(body.amountKobo)),
-          customerEmail: body.customerEmail,
-          callbackUrl: body.callbackUrl,
-          allowedPaymentMethods: body.allowedPaymentMethods || ['Transfer', 'USSD'],
-        });
-
-        return reply.code(200).send({
-          success: true,
-          data: {
-            provider: adapter.name,
-            checkoutLink: result.checkoutLink,
-            orderReference: result.orderReference,
-            allowedPaymentMethods: result.allowedPaymentMethods,
-            agreementId: body.agreementId || null,
-          },
-        });
-      } catch (err: any) {
-        console.error('[internal-banking-rail] createCheckoutOrder failed:', err.message);
-        return reply.code(500).send({
-          success: false,
-          error: `Checkout order generation failed: ${err.message}`,
-        });
-      }
+    if (!body.amountKobo || !body.customerEmail) {
+      return reply.code(400).send({
+        error: 'Missing required checkout fields: amountKobo, customerEmail',
+      });
     }
-  );
+
+    try {
+      const adapter = getBankingRailAdapter();
+      if (!adapter.createCheckoutOrder) {
+        return reply.code(501).send({
+          error: `Active banking rail (${adapter.name}) does not support hosted checkout`,
+        });
+      }
+
+      const result = await adapter.createCheckoutOrder({
+        orderReference,
+        amountKobo: Math.round(Number(body.amountKobo)),
+        customerEmail: body.customerEmail,
+        callbackUrl: body.callbackUrl,
+        allowedPaymentMethods: body.allowedPaymentMethods || ['Transfer', 'USSD'],
+      });
+
+      return reply.code(200).send({
+        success: true,
+        data: {
+          provider: adapter.name,
+          checkoutLink: result.checkoutLink,
+          orderReference: result.orderReference,
+          allowedPaymentMethods: result.allowedPaymentMethods,
+          agreementId: body.agreementId || null,
+        },
+      });
+    } catch (err: any) {
+      console.error('[internal-banking-rail] createCheckoutOrder failed:', err.message);
+      return reply.code(500).send({
+        success: false,
+        error: `Checkout order generation failed: ${err.message}`,
+      });
+    }
+  };
+  app.post('/api/payment/internal/checkout', handleCheckout);
+  app.post('/internal/checkout', handleCheckout);
 }
 
