@@ -40,8 +40,8 @@ import type {
   DataPlanOption,
   BettingProviderOption,
   BettingInquiryResponse,
-} from '../types/paystackUtilityTypes.js';
-import { DISCO_DISPLAY_NAMES } from '../types/paystackUtilityTypes.js';
+} from '../types/utilityTypes.js';
+import { DISCO_DISPLAY_NAMES } from '../types/utilityTypes.js';
 
 interface NombaTokenCache {
   accessToken: string;

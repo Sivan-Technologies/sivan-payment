@@ -15,7 +15,7 @@ import type {
   AirtimeCashRate,
   BettingProviderOption,
   BettingInquiryResponse,
-} from '../types/paystackUtilityTypes.js';
+} from '../types/utilityTypes.js';
 
 export type UtilityProviderName = 'paystack' | 'nomba' | 'flutterwave' | 'vtu_ng' | string;
 
