@@ -45,10 +45,11 @@ export const checkoutFeeTierSchema = z.object({
 });
 
 export const DEFAULT_CHECKOUT_FEE_TIERS = [
-  { minAmount: 0, maxAmount: 4999.99, flatFeeNgn: 50, percentFee: 0 },
-  { minAmount: 5000, maxAmount: 9999.99, flatFeeNgn: 100, percentFee: 0 },
-  { minAmount: 10000, maxAmount: 49999.99, flatFeeNgn: 150, percentFee: 0 },
-  { minAmount: 50000, maxAmount: null, flatFeeNgn: 250, percentFee: 0 },
+  { minAmount: 0, maxAmount: 6000, flatFeeNgn: 100, percentFee: 0 },
+  { minAmount: 6000.01, maxAmount: 10000, flatFeeNgn: 150, percentFee: 0 },
+  { minAmount: 10000.01, maxAmount: 25000, flatFeeNgn: 450, percentFee: 0 },
+  { minAmount: 25000.01, maxAmount: 50000, flatFeeNgn: 900, percentFee: 0 },
+  { minAmount: 50000.01, maxAmount: null, flatFeeNgn: 250, percentFee: 1.4 },
 ];
 
 export const feeSettingsSchema = z.object({
@@ -652,14 +653,36 @@ export function calculateCheckoutFee(
     matchingTier = tiers[tiers.length - 1];
   }
 
-  const flatFee = Number(matchingTier?.flatFeeNgn ?? 100);
-  const percentFee = Number(matchingTier?.percentFee ?? 0);
-  const sivanFeeNgn = Math.round((flatFee + (cleanAmount * percentFee) / 100) * 100) / 100;
+  const tierFlatFee = Number(matchingTier?.flatFeeNgn ?? 100);
+  const tierPercentFee = Number(matchingTier?.percentFee ?? 0);
 
-  const rawProviderFee = Math.ceil((cleanAmount * (providerPercent / 100)) * 100) / 100;
-  const providerFeeNgn = providerCap > 0 ? Math.min(rawProviderFee, providerCap) : rawProviderFee;
+  let totalFeeNgn: number;
 
-  const totalFeeNgn = Math.round((sivanFeeNgn + providerFeeNgn) * 100) / 100;
+  if (tierPercentFee > 0) {
+    // For large top-ups (> ₦50k), calculate provider fee + Sivan margin, rounded UP to nearest clean ₦100
+    const rawProvider = Math.min(
+      Math.ceil((cleanAmount * (providerPercent / 100))),
+      providerCap > 0 ? providerCap : Infinity
+    );
+    const rawTotalFee = rawProvider + tierFlatFee;
+    totalFeeNgn = Math.ceil(rawTotalFee / 100) * 100;
+  } else {
+    // Clean round flat fee tier (₦100, ₦150, ₦450, ₦900)
+    totalFeeNgn = tierFlatFee;
+  }
+
+  // Calculate Nomba's cut from total order (or deposit)
+  const totalPayableCandidate = cleanAmount + totalFeeNgn;
+  const rawNombaFee = Math.ceil((totalPayableCandidate * (providerPercent / 100)) * 100) / 100;
+  const providerFeeNgn = providerCap > 0 ? Math.min(rawNombaFee, providerCap) : rawNombaFee;
+
+  // SAFETY GUARD: Sivan float must NEVER cover provider fee.
+  // If totalFeeNgn is less than providerFeeNgn, raise fee so Sivan NEVER covers fees with float
+  if (totalFeeNgn < providerFeeNgn) {
+    totalFeeNgn = Math.ceil((providerFeeNgn + 50) / 50) * 50;
+  }
+
+  const sivanFeeNgn = Math.max(0, Math.round((totalFeeNgn - providerFeeNgn) * 100) / 100);
   const totalPayableNgn = Math.round((cleanAmount + totalFeeNgn) * 100) / 100;
   const creditAmountNgn = cleanAmount;
 
