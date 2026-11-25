@@ -85,7 +85,30 @@ export async function webhooksRoutes(app: FastifyInstance) {
       const isValid = adapter.verifyWebhookSignature(raw, headers);
 
       if (!isValid && process.env.APP_ENV === 'production') {
-        console.warn('[nomba-webhook] Signature verification failed in production');
+        const sigHeader = headers['nomba-sig-value']
+          ? 'nomba-sig-value'
+          : headers['x-nomba-signature']
+            ? 'x-nomba-signature'
+            : headers['nomba-signature']
+              ? 'nomba-signature'
+              : headers['x-signature']
+                ? 'x-signature'
+                : 'none';
+        let eventType = 'unknown';
+        try {
+          const parsed = JSON.parse(raw.toString('utf8'));
+          eventType = String(parsed?.event_type || parsed?.eventType || parsed?.type || 'unknown');
+        } catch {
+          // ignore
+        }
+        console.warn('[nomba-webhook] Signature verification failed in production', {
+          hasRawBody: Boolean(rawBody),
+          rawLen: raw.length,
+          sigHeader,
+          hasTimestamp: Boolean(headers['nomba-timestamp']),
+          eventType,
+          headerKeys: Object.keys(headers).filter((k) => k.includes('nomba') || k.includes('sig')),
+        });
         return reply.code(401).send({ error: 'invalid_signature' });
       }
 

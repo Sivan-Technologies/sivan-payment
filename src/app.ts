@@ -235,7 +235,23 @@ export async function buildApp() {
     global: false,
     encoding: false,
     runFirst: true,
-    routes: ['/api/webhooks/bridge']
+    routes: [
+      '/api/webhooks/bridge',
+      '/api/webhooks/nomba',
+      '/webhooks/nomba',
+      '/api/webhooks/paystack',
+      '/webhooks/paystack',
+      '/api/webhooks/9psb',
+      '/webhooks/9psb',
+      '/api/webhooks/flutterwave',
+      '/webhooks/flutterwave',
+      '/api/webhooks/mono',
+      '/webhooks/mono',
+      '/api/webhooks/breet',
+      '/webhooks/breet',
+      '/api/webhooks/moneygram',
+      '/webhooks/moneygram',
+    ]
   });
 
   /**
