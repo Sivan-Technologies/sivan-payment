@@ -137,11 +137,16 @@ export async function webhooksRoutes(app: FastifyInstance) {
         const orderRef = event.reference || '';
         // If reference indicates a Sivan checkout order (deposit or agreement funding)
         if (orderRef.startsWith('sivan_') || orderRef.startsWith('agr_') || String(event.providerCustomerId || '').startsWith('sivan_')) {
-          const verification = await sivanCheckoutService.verifyCheckoutTransaction(orderRef, 'nomba').catch(() => null);
+          const verification = await sivanCheckoutService.verifyCheckoutTransaction(orderRef, 'nomba').catch((err) => {
+            console.error('[nomba-webhook] verifyCheckoutTransaction error:', err?.message || err);
+            return null;
+          });
           if (verification && verification.verified) {
             await sivanCheckoutService.processCheckoutSuccess(verification).catch((err) => {
               console.warn('[nomba-webhook] Checkout success auto-processing notice:', err.message);
             });
+          } else {
+            console.warn('[nomba-webhook] Checkout verification did not pass for', orderRef, verification?.status);
           }
         }
 

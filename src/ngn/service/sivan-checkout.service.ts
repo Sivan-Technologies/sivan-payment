@@ -11,6 +11,10 @@
  */
 
 import { createBalanceLedgerEntry, listUserBalanceLedger } from '../../balances/balance.service.js';
+import { getUnifiedBalance } from '../../balances/unified-balance.service.js';
+import { db } from '../../database/json-database.js';
+import { createAuditLog } from '../../audit/audit.service.js';
+import { env } from '../../config/env.js';
 import {
   getCheckoutProvider,
   getDefaultCheckoutProviderName,
@@ -45,6 +49,99 @@ export class SivanCheckoutService {
   }
 
   /**
+   * Resolves any raw channel identifier (e.g. +2348079604214, whatsapp:+234..., usr_..., or
+   * orderReference / customerEmail fallback) to the canonical internal `usr_...` userId.
+   */
+  public async resolveCheckoutUserId(
+    rawUserId?: string,
+    orderReference?: string,
+    customerEmail?: string
+  ): Promise<string | null> {
+    const candidates: string[] = [];
+    if (rawUserId && rawUserId !== 'unknown') {
+      candidates.push(rawUserId.trim());
+    }
+
+    // Extract user/phone token from orderReference (e.g. sivan_dep__2348079604214_1795..._abc)
+    if (orderReference) {
+      const refMatch = orderReference.match(/^sivan_(?:dep|agr)_+([^_]+)_/);
+      if (refMatch?.[1]) {
+        candidates.push(refMatch[1]);
+      }
+    }
+
+    // Extract phone token from synthetic email (_2348079604214@users.sivantech.online)
+    if (customerEmail) {
+      const localPart = customerEmail.split('@')[0]?.replace(/^_+/, '') || '';
+      if (/^\d{10,15}$/.test(localPart)) {
+        candidates.push(`+${localPart}`);
+      }
+      candidates.push(customerEmail.trim());
+    }
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      if (candidate.startsWith('usr_')) {
+        const byId = await db.findUserById(candidate).catch(() => null);
+        if (byId) return byId.id;
+      }
+
+      const digits = candidate.replace(/^whatsapp:/i, '').replace(/\D/g, '');
+      if (digits.length >= 10 && digits.length <= 15) {
+        const withPlus = `+${digits}`;
+        const byWa =
+          (await db.findUserByWhatsappNumber(withPlus).catch(() => null)) ||
+          (await db.findUserByWhatsappNumber(`whatsapp:${withPlus}`).catch(() => null)) ||
+          (await db.findUserByWhatsappNumber(digits).catch(() => null));
+        if (byWa) return byWa.id;
+
+        const links = await db.listCustomerIdentityLinks().catch(() => []);
+        const waLink = links.find(
+          (l) =>
+            l.status === 'linked' &&
+            l.whatsappNumber &&
+            l.whatsappNumber.replace(/\D/g, '') === digits
+        );
+        if (waLink) return waLink.paymentUserId;
+      }
+
+      const byTarget = await db.findUserByTarget(candidate).catch(() => null);
+      if (byTarget) return byTarget.id;
+    }
+
+    return null;
+  }
+
+  /**
+   * Looks up persisted checkout order metadata saved at initialization time.
+   */
+  private async getPersistedCheckoutOrderMeta(orderReference: string): Promise<{
+    userId?: string;
+    depositAmountNgn?: number;
+    purpose?: 'deposit' | 'fund_agreement';
+    agreementId?: string;
+  } | null> {
+    try {
+      const snapshot = await db.read();
+      const log = (snapshot.auditLogs ?? []).find(
+        (entry) =>
+          entry.action === 'checkout.order_created' &&
+          entry.resourceId === orderReference
+      );
+      if (!log?.metadata) return null;
+      const meta = log.metadata as Record<string, any>;
+      return {
+        userId: typeof meta.userId === 'string' ? meta.userId : undefined,
+        depositAmountNgn: Number(meta.depositAmountNgn || 0) || undefined,
+        purpose: meta.purpose,
+        agreementId: typeof meta.agreementId === 'string' ? meta.agreementId : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Generates a hosted checkout link via the active provider.
    */
   public async createCheckoutOrder(
@@ -52,7 +149,31 @@ export class SivanCheckoutService {
     preferredProvider?: CheckoutProviderName
   ): Promise<CheckoutOrderResult> {
     const provider = getCheckoutProvider(preferredProvider);
-    return provider.createCheckoutOrder(input);
+    const resolvedUserId = await this.resolveCheckoutUserId(input.userId, undefined, input.customerEmail);
+    const order = await provider.createCheckoutOrder(input);
+
+    // Persist checkout order metadata so webhook/reconciliation always knows the exact
+    // canonical usr_... userId and net depositAmountNgn even if provider omits orderMetaData.
+    await createAuditLog({
+      actorType: 'user',
+      actorId: resolvedUserId || input.userId,
+      action: 'checkout.order_created',
+      resourceType: 'checkout_order',
+      resourceId: order.orderReference,
+      metadata: {
+        userId: resolvedUserId || input.userId,
+        rawUserId: input.userId,
+        depositAmountNgn: order.depositAmountNgn,
+        totalPayableNgn: order.totalPayableNgn,
+        purpose: order.purpose,
+        agreementId: order.agreementId,
+        provider: order.provider,
+      },
+    }).catch((err) => {
+      console.warn('[sivan-checkout] Failed to persist checkout.order_created audit log:', err?.message || err);
+    });
+
+    return order;
   }
 
   /**
@@ -64,7 +185,25 @@ export class SivanCheckoutService {
   ): Promise<CheckoutVerificationResult> {
     const providerName = preferredProvider || this.detectProviderFromReference(orderReference);
     const provider = getCheckoutProvider(providerName);
-    return provider.verifyCheckoutOrder(orderReference);
+    const verification = await provider.verifyCheckoutOrder(orderReference);
+
+    const persisted = await this.getPersistedCheckoutOrderMeta(orderReference);
+    if (persisted) {
+      if (!verification.userId && persisted.userId) {
+        verification.userId = persisted.userId;
+      }
+      if (persisted.depositAmountNgn && persisted.depositAmountNgn > 0) {
+        verification.depositAmountNgn = persisted.depositAmountNgn;
+      }
+      if (!verification.purpose && persisted.purpose) {
+        verification.purpose = persisted.purpose;
+      }
+      if (!verification.agreementId && persisted.agreementId) {
+        verification.agreementId = persisted.agreementId;
+      }
+    }
+
+    return verification;
   }
 
   /**
@@ -75,7 +214,7 @@ export class SivanCheckoutService {
   public async processCheckoutSuccess(
     verification: CheckoutVerificationResult
   ): Promise<CheckoutProcessingResult> {
-    const { orderReference, amountNgn, userId, purpose, agreementId, transactionId, provider } =
+    const { orderReference, amountNgn, userId, purpose, agreementId, transactionId, provider, customerEmail } =
       verification;
 
     if (!orderReference) {
@@ -86,7 +225,10 @@ export class SivanCheckoutService {
       throw new Error(`Invalid transaction amount (${amountNgn}) for orderReference ${orderReference}`);
     }
 
-    const cleanUserId = userId || (orderReference.split('_')[2] || 'unknown');
+    const cleanUserId = await this.resolveCheckoutUserId(userId, orderReference, customerEmail);
+    if (!cleanUserId) {
+      throw new Error(`Unable to resolve Sivan userId for checkout orderReference ${orderReference}`);
+    }
     const existingLedger = await listUserBalanceLedger(cleanUserId);
 
     // Handle Purpose: Service Agreement Funding
@@ -184,16 +326,94 @@ export class SivanCheckoutService {
       { actorType: 'provider', actorId: provider }
     );
 
+    void this.notifyWhatsAppCheckoutCredit({
+      userId: cleanUserId,
+      amountNgn: creditAmount,
+      orderReference,
+      provider,
+    });
+
     return {
       processed: true,
       alreadyProcessed: false,
       action: 'balance_deposit',
       userId: cleanUserId,
-      amountNgn,
+      amountNgn: creditAmount,
       orderReference,
       transactionId,
       provider,
     };
+  }
+
+  private async notifyWhatsAppCheckoutCredit(params: {
+    userId: string;
+    amountNgn: number;
+    orderReference: string;
+    provider: CheckoutProviderName;
+  }): Promise<void> {
+    try {
+      const rawWaUrl = env.WHATSAPP_NOTIFICATION_URL || process.env.WHATSAPP_NOTIFICATION_URL;
+      const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
+      if (!rawWaUrl || !secret) return;
+
+      const user = await db.findUserById(params.userId).catch(() => null);
+      let targetPhone = user?.whatsappNumber;
+      if (!targetPhone) {
+        const links = await db.listCustomerIdentityLinks().catch(() => []);
+        const activeWa = links
+          .filter((l) => l.paymentUserId === params.userId && l.status === 'linked' && Boolean(l.whatsappNumber))
+          .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+        targetPhone = activeWa[0]?.whatsappNumber;
+      }
+      if (!targetPhone) return;
+
+      let spendableText = `₦${params.amountNgn.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      try {
+        const unified = await getUnifiedBalance(params.userId);
+        const ngnBal = unified.balances.find((b) => b.asset.toLowerCase() === 'ngn');
+        if (ngnBal) {
+          spendableText = `₦${Number(ngnBal.spendable || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        }
+      } catch {
+        // Fallback to credited amount text
+      }
+
+      const creditFormatted = `₦${params.amountNgn.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const body =
+        `✅ Deposit Credited . Sivan Payment Ai\n\n` +
+        `• Amount Credited: ${creditFormatted}\n` +
+        `• Spendable NGN Balance: ${spendableText}\n` +
+        `• Rail: ${params.provider.toUpperCase()} Instant Checkout\n` +
+        `• Reference: ${params.orderReference}`;
+
+      const waNotifyUrl = rawWaUrl.endsWith('/api/notify') ? rawWaUrl : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+      const formattedTo = targetPhone.startsWith('whatsapp:')
+        ? targetPhone
+        : `whatsapp:${targetPhone.startsWith('+') ? targetPhone : `+${targetPhone.replace(/\D/g, '')}`}`;
+
+      await fetch(waNotifyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-notify-secret': secret,
+          'x-target-service': 'whatsapp-bot',
+        },
+        body: JSON.stringify({
+          to: formattedTo,
+          message: `${body}\n\nWithdraw . Transfer . New Deal`,
+          menuCard: {
+            body,
+            actions: [
+              { id: 'act_cashout', title: '🏧 Withdraw', action: 'CASHOUT' },
+              { id: 'act_transfer', title: '💸 Transfer', action: 'TRANSFER' },
+              { id: 'create service agreement', title: '🤝 New Deal', action: 'create service agreement' },
+            ],
+          },
+        }),
+      });
+    } catch (err: any) {
+      console.warn('[sivan-checkout.whatsapp_notify] Notification error:', err?.message || err);
+    }
   }
 
   private async fundAgreementFromCheckout(params: {

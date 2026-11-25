@@ -251,7 +251,7 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
     const purpose = orderMeta?.purpose || (orderReference.startsWith('sivan_agr_') ? 'fund_agreement' : 'deposit');
     const userId = orderMeta?.userId || data?.customerId;
     const agreementId = orderMeta?.agreementId;
-    const amountNgn = Number(data?.amount || 0);
+    const amountNgn = Number(data?.amount || data?.onlineCheckoutAmount || 0);
     const depositAmountNgn = Number(orderMeta?.depositAmountNgn || amountNgn);
 
     return {
@@ -262,8 +262,8 @@ export class NombaCheckoutProvider implements ICheckoutProvider {
       depositAmountNgn,
       orderReference,
       transactionId: data?.transactionId || data?.id,
-      customerEmail: data?.customerEmail,
-      paymentMethod: data?.paymentMethod,
+      customerEmail: data?.customerEmail || data?.onlineCheckoutCustomerEmail,
+      paymentMethod: data?.paymentMethod || data?.onlineCheckoutPaymentMethod,
       purpose,
       userId,
       agreementId,
