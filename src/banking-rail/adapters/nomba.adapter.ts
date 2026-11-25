@@ -43,6 +43,32 @@ interface NombaTokenCache {
   expiresAt: number;
 }
 
+function buildNombaWebhookString(payload: any, timestamp: string, missingValue: '' | 'undefined'): string {
+  const data = payload?.data || {};
+  const transaction = data?.transaction || data || {};
+  const merchant = data?.merchant || {};
+  return [
+    payload?.event_type || payload?.eventType,
+    payload?.requestId || payload?.request_id,
+    merchant.name,
+    merchant.walletId,
+    transaction.transactionId || transaction.id || transaction.transactionRef,
+    transaction.type,
+    transaction.status,
+    transaction.amount,
+    transaction.fee,
+    transaction.transactionAmount,
+    transaction.transactionFee,
+    transaction.createdAt,
+    transaction.timeCreated,
+    transaction.terminalId,
+    transaction.merchantTxRef || transaction.meta?.merchantTxRef,
+    timestamp,
+  ]
+    .map((value) => (value !== undefined && value !== null ? String(value) : missingValue))
+    .join('');
+}
+
 export class NombaBankingRailAdapter implements IBankingRailAdapter {
   readonly name: BankingRailName = 'nomba';
 
@@ -260,36 +286,48 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
       return false;
     }
 
-    const incomingSig =
+    const incomingSig = (
+      headers['nomba-sig-value'] ||
       headers['x-nomba-signature'] ||
       headers['nomba-signature'] ||
       headers['x-signature'] ||
-      '';
+      ''
+    ).trim();
 
     if (!incomingSig) {
       return false;
     }
 
-    const hmac = crypto.createHmac('sha512', secret);
-    hmac.update(rawBody);
-    const expectedSig = hmac.digest('hex');
+    const bodyStr = rawBody.toString('utf8');
+    const timestamp = (headers['nomba-timestamp'] || '').trim();
+    const candidates: string[] = [bodyStr];
 
-    const expectedBuf = Buffer.from(expectedSig);
-    const incomingBuf = Buffer.from(incomingSig);
-
-    if (expectedBuf.length !== incomingBuf.length) {
-      // Also try sha256 fallback if length matches 64 chars
-      if (incomingSig.length === 64) {
-        const hmac256 = crypto.createHmac('sha256', secret);
-        hmac256.update(rawBody);
-        const expected256 = hmac256.digest('hex');
-        const expBuf256 = Buffer.from(expected256);
-        return expBuf256.length === incomingBuf.length && crypto.timingSafeEqual(expBuf256, incomingBuf);
+    if (timestamp) {
+      candidates.push(`${timestamp}.${bodyStr}`, `${timestamp}${bodyStr}`);
+      try {
+        const parsed = JSON.parse(bodyStr);
+        candidates.push(
+          buildNombaWebhookString(parsed, timestamp, ''),
+          buildNombaWebhookString(parsed, timestamp, 'undefined')
+        );
+      } catch {
+        // Keep raw-body candidates when body is not valid JSON
       }
-      return false;
     }
 
-    return crypto.timingSafeEqual(expectedBuf, incomingBuf);
+    const incomingBuf = Buffer.from(incomingSig);
+    const safeEqual = (expected: string): boolean => {
+      const expectedBuf = Buffer.from(expected);
+      return expectedBuf.length === incomingBuf.length && crypto.timingSafeEqual(expectedBuf, incomingBuf);
+    };
+
+    return candidates.some((candidate) => {
+      const sha256 = crypto.createHmac('sha256', secret).update(candidate, 'utf8');
+      const sha256Hex = sha256.digest('hex');
+      const sha256Base64 = crypto.createHmac('sha256', secret).update(candidate, 'utf8').digest('base64');
+      const sha512Hex = crypto.createHmac('sha512', secret).update(candidate, 'utf8').digest('hex');
+      return safeEqual(sha256Base64) || safeEqual(sha256Hex) || safeEqual(sha512Hex);
+    });
   }
 
   parseWebhookEvent(rawBody: Buffer): BankingRailEvent {
