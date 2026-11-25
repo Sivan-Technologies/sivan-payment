@@ -554,4 +554,21 @@ export class NombaUtilityProvider implements IUtilityProvider {
       rawPayload: res,
     };
   }
+
+  /**
+   * Reads the live Nomba NGN account balance for the Provider Float panel
+   * and utility routing float cache.
+   */
+  public async getWalletBalanceNgn(): Promise<number> {
+    const res = await this.request<{
+      data?: { amount?: number | string; currency?: string };
+    }>('/v1/accounts/balance', { method: 'GET' });
+
+    const rawAmount = res?.data?.amount;
+    const balance = typeof rawAmount === 'number' ? rawAmount : Number(rawAmount);
+    if (!Number.isFinite(balance)) {
+      throw new Error('Nomba balance response missing numeric data.amount');
+    }
+    return balance;
+  }
 }
