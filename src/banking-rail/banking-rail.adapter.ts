@@ -77,6 +77,8 @@ export interface CreateTransferInput {
   amountKobo: number;
   /** Sivan user ID for audit */
   userId: string;
+  /** Resolved recipient account name (used by rails like Nomba) */
+  accountName?: string;
   narration?: string;
 }
 

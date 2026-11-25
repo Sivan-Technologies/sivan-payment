@@ -198,6 +198,55 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
     };
   }
 
+  /**
+   * Maps Paystack/legacy bank codes to Nomba bank codes verified against /v1/transfers/banks.
+   * Traditional CBN 3-digit codes (058, 044, 057, 033, 011, 035, etc.) pass through unchanged.
+   */
+  public mapBankCode(bankCode: string): string {
+    const clean = String(bankCode || '').trim();
+    const map: Record<string, string> = {
+      '999991': '100033', // PalmPay
+      '999992': '305',    // OPay (Paycom)
+      '100004': '305',    // OPay NIP -> Nomba bank code
+      '50211': '090267',  // Kuda Microfinance Bank
+      '50515': '090405',  // Moniepoint Bank
+    };
+    return map[clean] || clean;
+  }
+
+  /**
+   * Live NIBSS account name enquiry via Nomba /v1/transfers/bank/lookup.
+   */
+  public async lookupBankAccount(
+    accountNumber: string,
+    bankCode: string
+  ): Promise<{ accountNumber: string; accountName: string; bankCode: string }> {
+    const cleanAccount = String(accountNumber || '').trim();
+    const nombaBankCode = this.mapBankCode(bankCode);
+    const headers = await this.authHeaders();
+    const res = await fetch(`${this.baseUrl()}/transfers/bank/lookup`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        accountNumber: cleanAccount,
+        bankCode: nombaBankCode,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    const json = (await res.json().catch(() => ({}))) as any;
+    const accountName = json?.data?.accountName;
+    if (!res.ok || json?.code !== '00' || !accountName) {
+      throw new Error(json?.description || json?.message || `Nomba account lookup failed (${res.status})`);
+    }
+
+    return {
+      accountNumber: String(json.data.accountNumber || cleanAccount),
+      accountName: String(accountName).trim(),
+      bankCode: String(bankCode).trim(),
+    };
+  }
+
   async verifyIdentity(
     providerCustomerId: string,
     input: IdentityInput
@@ -428,8 +477,8 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
     const body = {
       amount: amountNaira,
       accountNumber: input.accountNumber,
-      accountName: input.narration || 'Sivan Transfer',
-      bankCode: input.bankCode,
+      accountName: input.accountName || input.narration || 'Sivan Transfer',
+      bankCode: this.mapBankCode(input.bankCode),
       merchantTxRef: input.providerRef,
       senderName: 'Sivan Technologies',
       narration: input.narration || `Sivan Payout ${input.providerRef}`,

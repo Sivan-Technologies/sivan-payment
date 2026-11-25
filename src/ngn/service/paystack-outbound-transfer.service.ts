@@ -9,6 +9,8 @@ import { createBalanceLedgerEntry } from '../../balances/balance.service.js';
 import { assertWithdrawalAuthorised } from '../../identity/withdrawal-pin.guard.js';
 import { hasWithdrawalPin } from '../../identity/withdrawal-pin.service.js';
 import { getBankingRailAdapter } from '../../banking-rail/banking-rail-registry.js';
+import { NombaBankingRailAdapter } from '../../banking-rail/adapters/nomba.adapter.js';
+import { resolveBankId, resolveNgnBankAccount } from './ngn-banks.service.js';
 import { resolvePaymentUserId, getUserNgnBalance } from './sivanUtilityService.js';
 import { calculateNgnOutboundTransferFee } from './ngn-transfer-fee.service.js';
 import type { NgnTransferRecord, NgnQuoteRecord } from '../types/ngn.types.js';
@@ -154,7 +156,11 @@ export async function listPaystackBanks(currency = 'NGN'): Promise<PaystackBank[
 }
 
 /**
- * Resolves an account number against a destination bank code via Paystack.
+ * Resolves an account number against a destination bank code.
+ * Routes through the active resolution aggregator:
+ *   1. Nomba live NIBSS name enquiry (/v1/transfers/bank/lookup)
+ *   2. Breet NGN bank resolution fallback
+ *   3. Paystack /bank/resolve fallback (if Paystack is active)
  */
 export async function resolvePaystackBankAccount(
   bankCode: string,
@@ -170,6 +176,44 @@ export async function resolvePaystackBankAccount(
     throw badRequest('Bank code is required.');
   }
 
+  let lastError: any = null;
+
+  // 1. Primary: Nomba NIBSS Name Enquiry (matches live payout rail)
+  try {
+    const nomba = new NombaBankingRailAdapter();
+    if (nomba.isConfigured()) {
+      const resolved = await nomba.lookupBankAccount(cleanAccount, cleanBank);
+      if (resolved?.accountName) {
+        return {
+          accountNumber: resolved.accountNumber,
+          accountName: resolved.accountName,
+          bankCode: cleanBank,
+        };
+      }
+    }
+  } catch (err: any) {
+    lastError = err;
+    console.warn(`[resolvePaystackBankAccount] Nomba lookup failed for bank=${cleanBank}:`, err?.message || err);
+  }
+
+  // 2. Fallback: Breet NGN Bank Resolution
+  try {
+    const breetBankId = await resolveBankId(cleanBank);
+    const resolved = await resolveNgnBankAccount(breetBankId, cleanAccount, 'ngn');
+    if (resolved?.accountName) {
+      return {
+        accountNumber: String(resolved.accountNumber || cleanAccount),
+        accountName: String(resolved.accountName).trim(),
+        bankCode: cleanBank,
+        bankName: resolved.bankName,
+      };
+    }
+  } catch (err: any) {
+    lastError = err;
+    console.warn(`[resolvePaystackBankAccount] Breet lookup failed for bank=${cleanBank}:`, err?.message || err);
+  }
+
+  // 3. Legacy Fallback: Paystack /bank/resolve
   try {
     const url = `${paystackBaseUrl()}/bank/resolve?account_number=${encodeURIComponent(cleanAccount)}&bank_code=${encodeURIComponent(cleanBank)}`;
     const res = await fetch(url, {
@@ -179,18 +223,17 @@ export async function resolvePaystackBankAccount(
     });
 
     const data: any = await res.json();
-    if (!data?.status || !data?.data?.account_name) {
-      throw badRequest(data?.message || 'Could not resolve account name. Check the account number and bank code.');
+    if (data?.status && data?.data?.account_name) {
+      return {
+        accountNumber: String(data.data.account_number || cleanAccount),
+        accountName: String(data.data.account_name).trim(),
+        bankCode: cleanBank,
+      };
     }
-
-    return {
-      accountNumber: String(data.data.account_number || cleanAccount),
-      accountName: String(data.data.account_name).trim(),
-      bankCode: cleanBank,
-    };
+    throw badRequest(data?.message || 'Could not resolve account name. Check the account number and bank code.');
   } catch (error: any) {
-    if (error?.statusCode || error?.status) throw error;
-    throw badRequest(`Bank resolution failed: ${String(error?.message || error)}`);
+    const msg = lastError?.message || error?.message || 'Could not resolve account name.';
+    throw badRequest(`Bank resolution failed: ${msg}`);
   }
 }
 
@@ -344,20 +387,8 @@ export async function executePaystackNgnBankTransfer(
   };
   await db.upsertNgnTransferRecord(transferRecord);
 
-  // 6. Dispatch to Paystack via BankingRailAdapter
-  const adapter = getBankingRailAdapter('paystack');
-  let result: TransferRecord;
-  try {
-    result = await adapter.createTransfer({
-      userId: canonicalUserId,
-      accountNumber: input.accountNumber,
-      bankCode: input.bankCode,
-      amountKobo: Math.round(input.amount * 100),
-      providerRef,
-      narration: input.narration || `Sivan transfer for ${canonicalUserId}`,
-    });
-  } catch (err: any) {
-    // Immediate Rejection by Paystack -> Release Entire Hold Atomically
+  // 6. Dispatch via BankingRailAggregator (9PSB primary -> Nomba failover)
+  const releaseHoldOnFailure = async (reason: string): Promise<never> => {
     recentBankTransferKeys.delete(dedup);
     await createBalanceLedgerEntry(
       {
@@ -368,7 +399,7 @@ export async function executePaystackNgnBankTransfer(
         status: 'available',
         sourceType: 'ngn_cashout',
         sourceId: transferId,
-        description: `Release hold for rejected Paystack bank transfer: ${err?.message ?? 'Rejected'}`,
+        description: `Release hold for rejected bank transfer: ${reason}`,
         transferId,
       },
       { actorType: 'system', actorId: 'sivan-payment' }
@@ -380,11 +411,31 @@ export async function executePaystackNgnBankTransfer(
       updatedAt: new Date().toISOString(),
       metadata: {
         ...(transferRecord.metadata as any),
-        failureReason: err?.message ?? 'Rejected by Paystack',
+        failureReason: reason,
       },
     });
 
-    throw badRequest(`Bank transfer failed: ${err?.message ?? 'Rejected by Paystack'}`);
+    throw badRequest(`Bank transfer failed: ${reason}`);
+  };
+
+  const adapter = getBankingRailAdapter('aggregator');
+  let result: TransferRecord;
+  try {
+    result = await adapter.createTransfer({
+      userId: canonicalUserId,
+      accountNumber: input.accountNumber,
+      bankCode: input.bankCode,
+      accountName: input.accountName,
+      amountKobo: Math.round(input.amount * 100),
+      providerRef,
+      narration: input.narration || `Sivan transfer for ${canonicalUserId}`,
+    });
+  } catch (err: any) {
+    return releaseHoldOnFailure(err?.message ?? 'Rejected by banking rail');
+  }
+
+  if (result.status === 'failed') {
+    return releaseHoldOnFailure(result.failureReason ?? 'Rejected by banking rail');
   }
 
   // 7. Update Transfer Record with Provider Response
