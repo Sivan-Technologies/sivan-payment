@@ -233,6 +233,8 @@ export function isAuthoritativeRejection(err: any): boolean {
     'upstream_declined',
     'no provider',
     'carries no',
+    'not whitelisted',
+    'request forbidden',
     'not supported on paystack rails',
     'pin',
   ];

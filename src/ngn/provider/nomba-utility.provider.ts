@@ -181,7 +181,11 @@ export class NombaUtilityProvider implements IUtilityProvider {
     const data = (await res.json().catch(() => ({}))) as any;
     if (!res.ok) {
       const msg = data.description || data.message || `Nomba request failed with status ${res.status}`;
-      throw new Error(msg);
+      const err = new Error(msg) as Error & { statusCode?: number; httpStatus?: number; code?: string };
+      err.statusCode = res.status;
+      err.httpStatus = res.status;
+      if (data?.code) err.code = String(data.code);
+      throw err;
     }
 
     return data;
