@@ -1712,6 +1712,9 @@ export async function executeCableTvInquiry(req: {
   if (!controls.enabled || controls.maintenanceMode) {
     throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
   }
+  if (!controls.cableTvEnabled) {
+    throw badRequest('Cable TV subscriptions are temporarily disabled.');
+  }
 
   if (!req.customerId || req.customerId.trim().length < 5) {
     throw badRequest('Please provide a valid smartcard or IUC number.');
@@ -1744,6 +1747,9 @@ export async function executeCableTvPayment(
   const controls = await getUtilitiesControls();
   if (!controls.enabled || controls.maintenanceMode) {
     throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+  if (!controls.cableTvEnabled) {
+    throw badRequest('Cable TV subscriptions are temporarily disabled.');
   }
 
   if (req.amountNgn < 1000 || req.amountNgn > 250_000) {
@@ -1897,6 +1903,9 @@ export async function executeBettingInquiry(
   if (!controls.enabled || controls.maintenanceMode) {
     throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
   }
+  if (controls.bettingEnabled === false) {
+    throw badRequest('Betting wallet funding is temporarily disabled.');
+  }
 
   if (!req.providerId || req.providerId.trim().length === 0) {
     throw badRequest('Please provide a valid betting provider ID (e.g. bet9ja, betking).');
@@ -1933,6 +1942,9 @@ export async function executeBettingPayment(
   const controls = await getUtilitiesControls();
   if (!controls.enabled || controls.maintenanceMode) {
     throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+  if (controls.bettingEnabled === false) {
+    throw badRequest('Betting wallet funding is temporarily disabled.');
   }
 
   if (req.amountNgn < 100 || req.amountNgn > 50_000) {
