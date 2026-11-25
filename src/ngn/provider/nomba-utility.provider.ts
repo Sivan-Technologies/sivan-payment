@@ -560,6 +560,67 @@ export class NombaUtilityProvider implements IUtilityProvider {
   }
 
   /**
+   * Queries Nomba for the status of a bill payment transaction by merchantTxRef.
+   * Returns 'SUCCESS', 'FAILED', 'NOT_FOUND', 'PENDING', or 'UNKNOWN' (on transient lookup error).
+   */
+  public async queryBillTransactionStatus(merchantTxRef: string): Promise<{
+    status: 'SUCCESS' | 'FAILED' | 'NOT_FOUND' | 'PENDING' | 'UNKNOWN';
+    raw?: unknown;
+  }> {
+    if (!merchantTxRef || !this.isConfigured()) {
+      return { status: 'UNKNOWN' };
+    }
+
+    try {
+      const token = await this.getAccessToken();
+      const url = `${this.baseUrl()}/v1/transactions/accounts/single?merchantTxRef=${encodeURIComponent(merchantTxRef)}`;
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          accountId: this.accountId(),
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'Sivan-Payment-Engine/1.0 (Borderless Autonomous Payment Protocol; support@sivantech.online)',
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+
+      const json = (await res.json().catch(() => null)) as any;
+
+      if (res.status === 404) {
+        return { status: 'NOT_FOUND', raw: json };
+      }
+
+      if (!res.ok) {
+        const msg = String(json?.description || json?.message || '').toLowerCase();
+        if (msg.includes('not found') || String(json?.code || '') === '404') {
+          return { status: 'NOT_FOUND', raw: json };
+        }
+        return { status: 'UNKNOWN', raw: { httpStatus: res.status, body: json } };
+      }
+
+      const data = json?.data;
+      if (!data) {
+        return { status: 'NOT_FOUND', raw: json };
+      }
+
+      const rawStatus = String(data.status || json?.status || '').toUpperCase();
+      if (rawStatus === 'SUCCESS' || rawStatus === 'COMPLETED') {
+        return { status: 'SUCCESS', raw: data };
+      }
+      if (rawStatus === 'FAILED' || rawStatus === 'REVERSED' || rawStatus === 'DECLINED') {
+        return { status: 'FAILED', raw: data };
+      }
+      return { status: 'PENDING', raw: data };
+    } catch (err) {
+      return {
+        status: 'UNKNOWN',
+        raw: { error: err instanceof Error ? err.message : String(err) },
+      };
+    }
+  }
+
+  /**
    * Reads the live Nomba NGN account balance for the Provider Float panel
    * and utility routing float cache.
    */

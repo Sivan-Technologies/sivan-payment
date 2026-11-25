@@ -54,6 +54,7 @@ import type {
   ProviderBettingResult,
 } from '../provider/utility-provider.interface.js';
 import { ensureUtilityRoutingLoaded } from './utility-routing.service.js';
+import { reconcileStaleUtilityHold } from './utility-hold-reconciler.js';
 
 /**
  * One key per purchase, reused for every attempt in a failover chain.
@@ -1674,6 +1675,20 @@ export async function reconcileUnsettledUtilityPurchases(): Promise<{
       } catch (relErr) {
         console.error(`[reconcileUnsettled] Failed to release rejected pending reservation ${tx.depositId}:`, relErr);
       }
+    }
+
+    try {
+      const staleOutcome = await reconcileStaleUtilityHold(tx);
+      if (staleOutcome === 'released') {
+        failed.push(tx.depositId);
+        continue;
+      }
+      if (staleOutcome === 'confirmed') {
+        settled.push(tx.depositId);
+        continue;
+      }
+    } catch (staleErr) {
+      console.error(`[reconcileUnsettled] Failed 1h stale hold check for ${tx.depositId}:`, staleErr);
     }
 
     pendingReconciliation.push(tx.depositId);
