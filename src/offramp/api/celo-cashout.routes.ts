@@ -34,14 +34,14 @@ interface CashoutExecuteBody {
 }
 
 // Canonical Textile Swap settlement contract on Celo Mainnet (UniswapX LimitOrderReactor)
-const TEXTILE_CELO_SWAP_ROUTER = process.env.TEXTILE_SWAP_ROUTER_ADDRESS || '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3';
+const TEXTILE_CELO_LIMIT_ORDER_REACTOR = process.env.TEXTILE_SWAP_ROUTER_ADDRESS || '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3';
 
 // Official Sivan Agent #10089 Celo Mainnet Treasury for Off-Ramp Liquidity Collection
 const SIVAN_CELO_OFFRAMP_VAULT = process.env.SIVAN_CELO_AGENT_ADDRESS || '0x46eFfe0409BFE99b0435e7bb7219DC6586612345';
 
 function getTextileOfframpDepositAddress(): string {
   const addr = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS;
-  if (addr && addr.toLowerCase() !== TEXTILE_CELO_SWAP_ROUTER.toLowerCase()) {
+  if (addr && addr.toLowerCase() !== TEXTILE_CELO_LIMIT_ORDER_REACTOR.toLowerCase()) {
     return addr;
   }
   return SIVAN_CELO_OFFRAMP_VAULT;
@@ -540,7 +540,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           protocolFee: 0,
           minimumReceived: amount,
           source: '1:1 Direct',
-          depositAddress: TEXTILE_CELO_SWAP_ROUTER,
+          depositAddress: TEXTILE_CELO_LIMIT_ORDER_REACTOR,
         });
       }
 
@@ -600,7 +600,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           minimumReceived: amount,
           source: '1:1 Direct Parity',
           chainId,
-          depositAddress: TEXTILE_CELO_SWAP_ROUTER,
+          depositAddress: TEXTILE_CELO_LIMIT_ORDER_REACTOR,
         });
       }
 
@@ -702,7 +702,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         minimumReceived: parseFloat((outputAmount * 0.995).toFixed(6)),
         source,
         chainId,
-        depositAddress: TEXTILE_CELO_SWAP_ROUTER,
+        depositAddress: TEXTILE_CELO_LIMIT_ORDER_REACTOR,
       });
     } catch (err: any) {
       return reply.code(500).send({ error: err.message || 'Swap quote failed' });

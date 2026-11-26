@@ -27,11 +27,11 @@ import {
 } from '../../wallets/celo/textile-fx.service.js';
 
 const SIVAN_CELO_OFFRAMP_VAULT = process.env.SIVAN_CELO_AGENT_ADDRESS || '0x46eFfe0409BFE99b0435e7bb7219DC6586612345';
-const TEXTILE_CELO_SWAP_ROUTER = '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3';
+const TEXTILE_CELO_LIMIT_ORDER_REACTOR = '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3';
 
 function getDepositAddress(): string {
   const custom = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS;
-  if (custom && custom.toLowerCase() !== TEXTILE_CELO_SWAP_ROUTER.toLowerCase()) {
+  if (custom && custom.toLowerCase() !== TEXTILE_CELO_LIMIT_ORDER_REACTOR.toLowerCase()) {
     return custom;
   }
   return SIVAN_CELO_OFFRAMP_VAULT;
