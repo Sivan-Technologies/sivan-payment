@@ -1,8 +1,12 @@
 import dns from 'node:dns';
+import net from 'node:net';
 
-// Ensure outbound network calls prefer IPv4 so Cloudflare/Nomba recognize our whitelisted static IP (13.39.31.121)
+// Ensure outbound network calls use IPv4 so IP-whitelisted providers (Nomba, 9PSB) recognize our static egress IP.
+// ipv4first orders DNS results; disabling family autoselection stops Happy Eyeballs from falling back to an
+// un-whitelisted IPv6 address when the IPv4 connect is slow.
 try {
   dns.setDefaultResultOrder('ipv4first');
+  net.setDefaultAutoSelectFamily(false);
 } catch {
   // Ignore on older Node runtimes
 }

@@ -335,7 +335,11 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
       }
 
       const rawSellAmount = BigInt(Math.round(amount * (10 ** sellDef.decimals))).toString();
-      const apiKey = process.env.TEXTILE_CREDIT_API_KEY || 'tx_live_COZCHrFw.FCrPbWcalixtV0G8BtGQ5iSFbW98SS65';
+      const apiKey = (process.env.TEXTILE_CREDIT_API_KEY || '').trim();
+      if (!apiKey) {
+        request.log.error({ event: 'textile_api_key_missing' }, 'TEXTILE_CREDIT_API_KEY is not configured');
+        return reply.code(503).send({ error: 'Textile FX is not configured on this environment.' });
+      }
 
       const textileRes = await fetch('https://api.textilecredit.com/v2/rfq/request', {
         method: 'POST',
@@ -398,7 +402,11 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Missing required parameters: id and txHash are required.' });
       }
 
-      const apiKey = process.env.TEXTILE_CREDIT_API_KEY || 'tx_live_COZCHrFw.FCrPbWcalixtV0G8BtGQ5iSFbW98SS65';
+      const apiKey = (process.env.TEXTILE_CREDIT_API_KEY || '').trim();
+      if (!apiKey) {
+        request.log.error({ event: 'textile_api_key_missing' }, 'TEXTILE_CREDIT_API_KEY is not configured');
+        return reply.code(503).send({ error: 'Textile FX is not configured on this environment.' });
+      }
 
       const textileRes = await fetch(`https://api.textilecredit.com/v2/rfq/${encodeURIComponent(id)}/submit`, {
         method: 'POST',
