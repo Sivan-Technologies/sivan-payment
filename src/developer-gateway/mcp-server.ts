@@ -12,6 +12,7 @@ import { developerGatewayService } from './developer-gateway.service.js';
 import type { WalletChain } from '../database/types.js';
 import { resolvePaystackBankAccount } from '../ngn/service/paystack-outbound-transfer.service.js';
 import { getChainAdapter } from '../wallets/chain-adapter-registry.js';
+import { getTextileFxQuote } from '../wallets/celo/textile-fx.service.js';
 
 export interface McpJsonRpcRequest {
   jsonrpc?: string;
@@ -350,16 +351,47 @@ export class McpServerEngine {
       }
 
       case 'sivan_fiat_bank_cashout': {
+        const amountUsd = Number(args.amountUsd);
+        const bankCode = String(args.bankCode || '').trim();
+        const accountNumber = String(args.accountNumber || '').trim();
+
+        if (!Number.isFinite(amountUsd) || amountUsd < 1) {
+          return {
+            status: 'ERROR',
+            error: 'amountUsd must be a valid number of at least 1 USD.',
+          };
+        }
+        if (!/^\d{10}$/.test(accountNumber) || !bankCode) {
+          return {
+            status: 'ERROR',
+            error: 'Valid bankCode and 10-digit Nigerian NUBAN accountNumber are required.',
+          };
+        }
+
+        const fxQuote = await getTextileFxQuote('usdc_to_cngn', amountUsd);
+        const resolvedAccount = await resolvePaystackBankAccount(bankCode, accountNumber);
+
         return {
-          status: 'SUCCESS',
-          payoutReference: `PAY-MCP-${Date.now()}`,
-          amountUsd: args.amountUsd,
-          estimatedNgn: Number(args.amountUsd) * 1550,
-          destinationBankCode: args.bankCode,
-          destinationAccountNumber: args.accountNumber,
-          settlementWindowSeconds: 90,
-          settlementWindowEstimate: '1 to 2 minutes via NIP rails',
-          channel: 'NIP_INSTANT_DIRECT',
+          status: 'QUOTE_READY',
+          payoutDispatched: false,
+          amountUsd,
+          liveRate: fxQuote.rate,
+          grossNgn: fxQuote.outputAmount,
+          sivanFeeNgn: fxQuote.sivanFee,
+          netNgn: fxQuote.netOutput,
+          quotedAt: fxQuote.quotedAt,
+          expiresAt: fxQuote.expiresAt,
+          destinationBankCode: resolvedAccount.bankCode || bankCode,
+          destinationAccountNumber: resolvedAccount.accountNumber,
+          destinationAccountName: resolvedAccount.accountName,
+          corridor: 'CELO_USDT_TO_CNGN_TO_NGN',
+          settlementWindowEstimate: 'typically under 1 to 2 minutes via NIBSS / NIP after on-chain confirmation',
+          nextSteps: [
+            '1. Request firm Textile FX quote via POST /api/v1/swap/rfq (fromToken: USDT, toToken: cNGN, chainId: 42220)',
+            '2. Approve quote.reactor for takerPays (never send a bare ERC-20 transfer to LimitOrderReactor)',
+            '3. Broadcast transactions.swap with ERC-8021 attribution tag celo_bdb587d550be',
+            '4. Submit verified celoTxHash to POST /api/v1/cashout/execute to settle NGN via NIBSS / NIP',
+          ],
         };
       }
 
