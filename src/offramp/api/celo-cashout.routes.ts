@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import crypto from 'node:crypto';
 import {
   getTextileFxQuote,
   getEffectiveOfframpFeeConfig,
@@ -9,6 +8,7 @@ import {
   listTextileBanks,
   resolveTextileBankAccount,
 } from '../../wallets/celo/textile-fx.service.js';
+import { celoRpc } from '../../wallets/celo/celo-rpc.js';
 import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 import { offrampRegistry } from '../provider/offramp-registry.js';
 import {
@@ -131,23 +131,10 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
         });
       } catch (quoteErr: any) {
-        // Safe calibrated fallback if API key is in setup
-        const fallbackRate = 1600;
-        const grossNgn = Math.round(amount * fallbackRate * 100) / 100;
-        const sivanFeeNgn = Math.round(grossNgn * 0.01 * 100) / 100;
-        const netNgn = Math.round((grossNgn - sivanFeeNgn) * 100) / 100;
-
-        return reply.send({
-          status: 'ok',
-          quoteType: 'calibrated_rfq',
-          token,
-          inputAmount: amount,
-          rate: fallbackRate,
-          grossNgn,
-          sivanFeeNgn,
-          netNgn,
-          depositAddress: getTextileOfframpDepositAddress(),
-          eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
+        request.log.error({ err: quoteErr, token, amount }, 'Live Textile FX quote failed');
+        return reply.code(503).send({
+          status: 'error',
+          error: 'Live FX quote is temporarily unavailable from Textile FX. Please try again.',
         });
       }
     } catch (err: any) {
@@ -164,9 +151,9 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
     try {
       const { quoteId, celoTxHash, token, amount, bankAccount, bankCode, senderAddress } = request.body || {};
 
-      let resolvedTxHash = celoTxHash;
-      if (!resolvedTxHash || !resolvedTxHash.startsWith('0x')) {
-        resolvedTxHash = `0x${crypto.randomBytes(32).toString('hex')}`;
+      const resolvedTxHash = (celoTxHash || '').trim();
+      if (!/^0x[0-9a-fA-F]{64}$/.test(resolvedTxHash)) {
+        return reply.code(400).send({ error: 'Valid 66-character Celo transaction hash (celoTxHash) is required.' });
       }
 
       if (!bankAccount || bankAccount.length !== 10) {
@@ -180,6 +167,29 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         return reply.code(403).send(limitCheck.errorResponse);
       }
 
+      // Verify on-chain Celo transaction receipt before initiating any fiat redemption
+      const receipt = await celoRpc<any>('eth_getTransactionReceipt', [resolvedTxHash]).catch((rpcErr: any) => {
+        request.log.error({ err: rpcErr, celoTxHash: resolvedTxHash }, 'Celo RPC receipt lookup failed');
+        return undefined;
+      });
+
+      if (receipt === undefined) {
+        return reply.code(502).send({ error: 'Unable to verify Celo transaction receipt on-chain. Please retry.' });
+      }
+      if (!receipt) {
+        return reply.code(409).send({ error: 'Celo transaction receipt not found on-chain yet. Wait for confirmation.' });
+      }
+      if (receipt.status !== '0x1') {
+        return reply.code(400).send({ error: 'Celo transaction reverted or failed on-chain (status != 0x1).' });
+      }
+      if (
+        senderAddress &&
+        typeof receipt.from === 'string' &&
+        receipt.from.toLowerCase() !== senderAddress.trim().toLowerCase()
+      ) {
+        return reply.code(400).send({ error: 'On-chain transaction sender does not match senderAddress.' });
+      }
+
       request.log.info({
         event: 'cashout_execution_initiated',
         token,
@@ -187,38 +197,39 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         bankAccount,
         bankCode,
         celoTxHash: resolvedTxHash,
-        senderAddress,
-      }, 'Initiating Celo off-ramp redemption');
+        blockNumber: receipt.blockNumber,
+        senderAddress: receipt.from || senderAddress,
+      }, 'Verified Celo transaction receipt; initiating off-ramp redemption');
 
-      // If quoteId is provided and Textile API key is configured, trigger Textile redemption
-      if (quoteId && process.env.TEXTILE_CREDIT_API_KEY) {
-        try {
-          const redemption = await executeRedemption(quoteId, resolvedTxHash);
-          return reply.code(200).send({
-            status: 'processing',
-            provider: 'textile_credit',
-            redemptionId: redemption.redemptionId,
-            celoTxHash: resolvedTxHash,
-            eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
-          });
-        } catch (textileErr: any) {
-          request.log.warn({ err: textileErr }, 'Textile redemption dispatch error; queuing for automated reconciliation');
-        }
+      if (!quoteId) {
+        return reply.code(400).send({ error: 'A valid provider quoteId is required to execute fiat redemption.' });
       }
 
-      // Return successful acknowledgment and queued settlement
-      const generatedRef = `SIV-CELO-${Date.now().toString(36).toUpperCase()}`;
-      return reply.code(200).send({
-        status: 'processing',
-        provider: 'textile_credit_queued',
-        redemptionId: generatedRef,
-        celoTxHash: resolvedTxHash,
-        token: token || 'USDC',
-        amount,
-        bankAccount,
-        bankCode,
-        settlementTime: 'typically under 1 to 2 minutes via NIBSS / NIP rails; internal ledger settled in 0.15s',
-      });
+      const apiKey = (process.env.TEXTILE_CREDIT_API_KEY || '').trim();
+      if (!apiKey) {
+        request.log.error({ event: 'textile_api_key_missing' }, 'TEXTILE_CREDIT_API_KEY is not configured');
+        return reply.code(503).send({ error: 'Textile FX is not configured on this environment.' });
+      }
+
+      try {
+        const redemption = await executeRedemption(quoteId, resolvedTxHash);
+        return reply.code(200).send({
+          status: 'processing',
+          provider: 'textile_credit',
+          redemptionId: redemption.redemptionId,
+          celoTxHash: resolvedTxHash,
+          blockNumber: receipt.blockNumber,
+          eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
+        });
+      } catch (textileErr: any) {
+        request.log.error({ err: textileErr, celoTxHash: resolvedTxHash, quoteId }, 'Textile redemption dispatch failed');
+        return reply.code(502).send({
+          status: 'error',
+          settlementStatus: 'pending',
+          celoTxHash: resolvedTxHash,
+          error: textileErr?.message || 'Provider redemption dispatch failed; settlement remains pending until confirmed.',
+        });
+      }
     } catch (err: any) {
       request.log.error({ err }, 'Cashout execution failed');
       return reply.code(500).send({ error: err.message || 'Failed to execute cashout redemption' });
@@ -231,23 +242,46 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
    */
   app.get('/api/v1/cashout/status/:redemptionId', async (request: FastifyRequest<{ Params: { redemptionId: string } }>, reply: FastifyReply) => {
     const { redemptionId } = request.params;
-    if (redemptionId.startsWith('TXT-') && process.env.TEXTILE_CREDIT_API_KEY) {
-      try {
-        const result = await getRedemptionStatus(redemptionId);
-        return reply.send({ status: 'ok', data: result });
-      } catch (err: any) {
-        // pass through to fallback
-      }
+    if (!redemptionId || !redemptionId.startsWith('TXT-')) {
+      return reply.code(404).send({
+        status: 'error',
+        error: 'Unknown redemption reference. Only provider-tracked TXT- redemptions can be queried.',
+        data: {
+          redemptionId,
+          settlementStatus: 'unknown',
+          confirmed: false,
+        },
+      });
     }
 
-    return reply.send({
-      status: 'ok',
-      data: {
-        redemptionId,
-        settlementStatus: 'completed',
-        deliveredVia: 'NIBSS / NIP',
-      },
-    });
+    if (!process.env.TEXTILE_CREDIT_API_KEY) {
+      request.log.error({ event: 'textile_api_key_missing', redemptionId }, 'TEXTILE_CREDIT_API_KEY is not configured');
+      return reply.code(503).send({
+        status: 'error',
+        error: 'Provider status lookup is unavailable on this environment.',
+        data: {
+          redemptionId,
+          settlementStatus: 'pending',
+          confirmed: false,
+        },
+      });
+    }
+
+    try {
+      const result = await getRedemptionStatus(redemptionId);
+      return reply.send({ status: 'ok', data: result });
+    } catch (err: any) {
+      request.log.error({ err, redemptionId }, 'Failed to fetch authoritative redemption status');
+      return reply.code(502).send({
+        status: 'error',
+        error: err?.message || 'Unable to verify redemption status with provider.',
+        data: {
+          redemptionId,
+          settlementStatus: 'pending',
+          confirmed: false,
+        },
+      });
+    }
   });
 
   /**
@@ -420,21 +454,35 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
 
       const data: any = await textileRes.json().catch(() => ({}));
 
+      if (!textileRes.ok) {
+        request.log.warn({ rfqId: id, txHash, status: textileRes.status, data }, 'Textile RFQ submit rejected by provider');
+        return reply.code(textileRes.status >= 400 ? textileRes.status : 502).send({
+          status: 'error',
+          rfqId: id,
+          txHash,
+          settled: false,
+          settlementStatus: 'pending',
+          textileResponse: data,
+        });
+      }
+
       return reply.send({
         status: 'ok',
         rfqId: id,
         txHash,
-        settled: textileRes.ok,
+        settled: Boolean(data?.settled ?? data?.status === 'settled'),
+        settlementStatus: data?.status || 'submitted',
         textileResponse: data,
       });
     } catch (err: any) {
-      request.log.warn({ err }, 'Textile RFQ submit non-fatal warning');
-      return reply.send({
-        status: 'ok',
+      request.log.error({ err, rfqId: request.params.id }, 'Textile RFQ submit failed');
+      return reply.code(502).send({
+        status: 'error',
         rfqId: request.params.id,
         txHash: request.body?.txHash,
-        settled: true,
-        note: 'Locally recorded; Textile submit notification queued.',
+        settled: false,
+        settlementStatus: 'pending',
+        error: err?.message || 'Textile RFQ submit failed; settlement status remains pending until confirmed.',
       });
     }
   });
